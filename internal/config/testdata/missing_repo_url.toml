@@ -1,0 +1,7 @@
+[git]
+branch = "main"
+clone_path = "/opt/gitops/repo"
+pull_interval_seconds = 300
+
+[sops]
+ssh_key_path = "/home/pi/.ssh/id_ed25519"
