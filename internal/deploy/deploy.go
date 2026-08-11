@@ -27,10 +27,8 @@ func Deploy(serviceDir string) error {
 		return fmt.Errorf("docker compose up (%s): %w: %s", composeFile, err, stderr.String())
 	}
 
-	// docker compose up -d writes its "Container X Started" progress to
-	// stderr, not stdout -- it's meant for a terminal, not a pipe. Log
-	// whatever came back on either, since seeing what actually happened
-	// beats guessing at 2am.
+	// docker compose writes progress to stderr even on success, so check
+	// both streams.
 	if out := strings.TrimSpace(stdout.String()); out != "" {
 		log.Printf("deploy: docker compose stdout:\n%s", out)
 	}

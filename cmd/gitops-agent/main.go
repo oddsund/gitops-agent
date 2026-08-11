@@ -51,8 +51,7 @@ func main() {
 }
 
 // runOnce syncs the config repo, then decrypts and deploys every enabled
-// service. A failure for one service is logged and does not stop the
-// others from being deployed.
+// service; one service's failure doesn't stop the others.
 func runOnce(cfg *config.Config, auth transport.AuthMethod) error {
 	changed, err := gitsync.Sync(gitsync.Config{
 		RepoURL:   cfg.Git.RepoURL,
