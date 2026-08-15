@@ -6,13 +6,3 @@ pull_interval_seconds = 300
 
 [sops]
 ssh_key_path = "/home/pi/.ssh/id_ed25519"
-
-[[services]]
-name = "demoapp"
-path = "services/demoapp"
-enabled = true
-
-[[services]]
-name = "bookorbit"
-path = "services/bookorbit"
-enabled = false

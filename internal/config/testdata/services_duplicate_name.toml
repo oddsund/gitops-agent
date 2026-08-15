@@ -1,0 +1,9 @@
+[[services]]
+name = "demoapp"
+path = "services/demoapp"
+enabled = true
+
+[[services]]
+name = "demoapp"
+path = "services/other"
+enabled = false

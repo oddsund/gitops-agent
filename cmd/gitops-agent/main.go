@@ -19,6 +19,11 @@ import (
 	"github.com/oddsund/gitops-agent/internal/sopsdecrypt"
 )
 
+// servicesManifest is the services list's path relative to the repo root.
+// It's tracked in git, unlike config.toml, so enabling a service is a
+// commit, not an SSH session.
+const servicesManifest = "services.toml"
+
 func main() {
 	configPath := flag.String("config", "/etc/gitops-agent/config.toml", "path to config.toml")
 	flag.Parse()
@@ -30,10 +35,6 @@ func main() {
 		log.Fatalf("loading config: %v", err)
 	}
 
-	if len(cfg.EnabledServices()) == 0 {
-		log.Printf("no services enabled -- I'll keep polling regardless, just won't have anything to deploy")
-	}
-
 	auth, err := gitsync.SSHAuth(cfg.Sops.SSHKeyPath)
 	if err != nil {
 		log.Fatalf("loading SSH key: %v", err)
@@ -42,29 +43,51 @@ func main() {
 	interval := time.Duration(cfg.Git.PullIntervalSeconds) * time.Second
 	log.Printf("polling %s (branch %s) every %s", cfg.Git.RepoURL, cfg.Git.Branch, interval)
 
+	// svcCfg holds the last-known-good services manifest across cycles: if
+	// a pulled commit has a broken services.toml, we keep deploying what
+	// we last successfully parsed instead of grinding to a halt.
+	var svcCfg *config.ServicesConfig
+
 	for {
-		if err := runOnce(cfg, auth); err != nil {
+		svcCfg, err = runOnce(cfg, svcCfg, auth)
+		if err != nil {
 			log.Printf("run failed, will try again next cycle: %v", err)
 		}
 		time.Sleep(interval)
 	}
 }
 
-// runOnce syncs the config repo, then decrypts and deploys every enabled
-// service; one service's failure doesn't stop the others.
-func runOnce(cfg *config.Config, auth transport.AuthMethod) error {
+// runOnce syncs the config repo, reloads the services manifest, then
+// decrypts and deploys every enabled service; one service's failure
+// doesn't stop the others. It returns the services manifest to use next
+// cycle: the freshly reloaded one, or prevSvcCfg unchanged if the manifest
+// in the repo failed to parse.
+func runOnce(cfg *config.AgentConfig, prevSvcCfg *config.ServicesConfig, auth transport.AuthMethod) (*config.ServicesConfig, error) {
 	changed, err := gitsync.Sync(gitsync.Config{
 		RepoURL:   cfg.Git.RepoURL,
 		Branch:    cfg.Git.Branch,
 		ClonePath: cfg.Git.ClonePath,
 	}, auth)
 	if err != nil {
-		return fmt.Errorf("syncing %s: %w", cfg.Git.RepoURL, err)
+		return prevSvcCfg, fmt.Errorf("syncing %s: %w", cfg.Git.RepoURL, err)
 	}
 	log.Printf("git sync complete (changed=%v)", changed)
 
+	svcCfg := prevSvcCfg
+	manifestPath := filepath.Join(cfg.Git.ClonePath, servicesManifest)
+	if loaded, err := config.LoadServices(manifestPath); err != nil {
+		log.Printf("services manifest %s is broken, keeping last-known-good list: %v", manifestPath, err)
+	} else {
+		svcCfg = loaded
+	}
+
+	if svcCfg == nil {
+		log.Printf("no valid services manifest loaded yet -- nothing to deploy this cycle")
+		return svcCfg, nil
+	}
+
 	var errs []error
-	for _, svc := range cfg.EnabledServices() {
+	for _, svc := range svcCfg.EnabledServices() {
 		serviceDir := filepath.Join(cfg.Git.ClonePath, svc.Path)
 
 		log.Printf("service %s: decrypting secrets", svc.Name)
@@ -81,5 +104,5 @@ func runOnce(cfg *config.Config, auth transport.AuthMethod) error {
 
 		log.Printf("deployed %s (%s)", svc.Name, serviceDir)
 	}
-	return errors.Join(errs...)
+	return svcCfg, errors.Join(errs...)
 }

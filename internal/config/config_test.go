@@ -23,14 +23,6 @@ func TestLoad_Valid(t *testing.T) {
 	if cfg.Sops.SSHKeyPath != "/home/pi/.ssh/id_ed25519" {
 		t.Errorf("SSHKeyPath = %q", cfg.Sops.SSHKeyPath)
 	}
-	if len(cfg.Services) != 2 {
-		t.Fatalf("len(Services) = %d, want 2", len(cfg.Services))
-	}
-
-	enabled := cfg.EnabledServices()
-	if len(enabled) != 1 || enabled[0].Name != "demoapp" {
-		t.Errorf("EnabledServices() = %+v, want just demoapp", enabled)
-	}
 }
 
 func TestLoad_MissingRequiredField(t *testing.T) {
@@ -45,10 +37,35 @@ func TestLoad_MissingFile(t *testing.T) {
 	}
 }
 
+func TestLoadServices_Valid(t *testing.T) {
+	cfg, err := LoadServices("testdata/services_valid.toml")
+	if err != nil {
+		t.Fatalf("LoadServices: %v", err)
+	}
+	if len(cfg.Services) != 2 {
+		t.Fatalf("len(Services) = %d, want 2", len(cfg.Services))
+	}
+
+	enabled := cfg.EnabledServices()
+	if len(enabled) != 1 || enabled[0].Name != "demoapp" {
+		t.Errorf("EnabledServices() = %+v, want just demoapp", enabled)
+	}
+}
+
+func TestLoadServices_MissingFile(t *testing.T) {
+	if _, err := LoadServices("testdata/does_not_exist.toml"); err == nil {
+		t.Fatal("expected error for missing file, got nil")
+	}
+}
+
+func TestLoadServices_DuplicateName(t *testing.T) {
+	if _, err := LoadServices("testdata/services_duplicate_name.toml"); err == nil {
+		t.Fatal("expected error for duplicate service name, got nil")
+	}
+}
+
 func TestValidate_DuplicateServiceName(t *testing.T) {
-	cfg := Config{
-		Git:  Git{RepoURL: "x", Branch: "main", ClonePath: "/tmp/x", PullIntervalSeconds: 1},
-		Sops: Sops{SSHKeyPath: "/tmp/key"},
+	cfg := ServicesConfig{
 		Services: []Service{
 			{Name: "a", Path: "a", Enabled: true},
 			{Name: "a", Path: "b", Enabled: false},
