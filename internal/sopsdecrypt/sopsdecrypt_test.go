@@ -30,6 +30,7 @@ func TestDecryptFile_SSHNativeAgeIdentity(t *testing.T) {
 
 func TestDecryptServiceSecrets(t *testing.T) {
 	dir := t.TempDir()
+	secretsBaseDir := t.TempDir()
 	encContent, err := os.ReadFile("testdata/secrets.enc.env")
 	if err != nil {
 		t.Fatal(err)
@@ -38,26 +39,33 @@ func TestDecryptServiceSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := DecryptServiceSecrets(dir, "testdata/test_key"); err != nil {
+	if err := DecryptServiceSecrets(dir, "demoapp", "testdata/test_key", secretsBaseDir); err != nil {
 		t.Fatalf("DecryptServiceSecrets: %v", err)
 	}
 
-	got, err := os.ReadFile(filepath.Join(dir, "secrets.env"))
+	outPath := filepath.Join(secretsBaseDir, "demoapp", "secrets.env")
+	got, err := os.ReadFile(outPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := wantPlaintext(t); string(got) != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
+
+	// Never written back into the service directory (the git worktree).
+	if _, err := os.Stat(filepath.Join(dir, "secrets.env")); !os.IsNotExist(err) {
+		t.Error("secrets.env was written into serviceDir, want it only under secretsBaseDir")
+	}
 }
 
 func TestDecryptServiceSecrets_NoEncFile(t *testing.T) {
 	dir := t.TempDir()
+	secretsBaseDir := t.TempDir()
 
-	if err := DecryptServiceSecrets(dir, "testdata/test_key"); err != nil {
+	if err := DecryptServiceSecrets(dir, "demoapp", "testdata/test_key", secretsBaseDir); err != nil {
 		t.Fatalf("expected no error when secrets.enc.env is absent, got %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "secrets.env")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(secretsBaseDir, "demoapp", "secrets.env")); !os.IsNotExist(err) {
 		t.Error("expected no secrets.env to be written")
 	}
 }

@@ -54,8 +54,10 @@ func SSHAuth(sshKeyPath string) (transport.AuthMethod, error) {
 // discarded rather than merged. This is deliberate GitOps posture -- the
 // clone is disposable -- and it's what keeps a stray hand-edit in the clone
 // from wedging reconciliation forever the way a failed merge pull would.
-// The reset does not touch untracked files, so gitignored files such as
-// decrypted secrets.env survive.
+// The reset does not touch untracked files, so anything gitignored dropped
+// into the clone survives (decrypted secrets no longer live here -- see
+// internal/sopsdecrypt -- but this stays as general protection for
+// whatever else ends up untracked in the worktree).
 func Sync(cfg Config, auth transport.AuthMethod) (Result, error) {
 	if _, statErr := os.Stat(cfg.ClonePath); errors.Is(statErr, os.ErrNotExist) {
 		log.Printf("gitsync: %s doesn't exist yet, cloning %s (branch %s) -- this is a first run, or someone tidied up", cfg.ClonePath, cfg.RepoURL, cfg.Branch)
@@ -114,9 +116,11 @@ func Sync(cfg Config, auth transport.AuthMethod) (Result, error) {
 	// go-git's HardReset, unlike `git reset --hard`, deletes *every*
 	// untracked file in the worktree, gitignored or not -- it diffs the
 	// worktree against the index without applying gitignore rules. That
-	// would silently wipe decrypted secrets.env files on every sync, so
-	// back up untracked files first and restore whichever ones the reset
-	// removes. wt.Clean() must never be added after this: that's the
+	// would silently wipe any gitignored file dropped into the clone on
+	// every sync (originally written to guard decrypted secrets.env, back
+	// when those lived here -- see internal/sopsdecrypt for where they live
+	// now), so back up untracked files first and restore whichever ones the
+	// reset removes. wt.Clean() must never be added after this: that's the
 	// go-git call that matches real git's untracked-file deletion, and is
 	// exactly what we're routing around here.
 	preserved, err := snapshotUntrackedFiles(repo, cfg.ClonePath)

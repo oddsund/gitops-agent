@@ -33,10 +33,21 @@ func DecryptFile(encPath, sshKeyPath string) ([]byte, error) {
 	return out, nil
 }
 
-// DecryptServiceSecrets decrypts <serviceDir>/secrets.enc.env to
-// <serviceDir>/secrets.env, if secrets.enc.env exists. It's a no-op for
-// services that don't have any encrypted secrets.
-func DecryptServiceSecrets(serviceDir, sshKeyPath string) error {
+// DefaultSecretsBaseDir is where DecryptServiceSecrets writes plaintext by
+// default: tmpfs (backed by the gitops-agent.service unit's
+// RuntimeDirectory=gitops-agent), not the git worktree. That means a
+// secret is gone on reboot or `systemctl stop`, and is never one `git add
+// -A` away from being committed (.gitignore already covers secrets.env, so
+// this is defence in depth on top of that, not instead of it).
+const DefaultSecretsBaseDir = "/run/gitops-agent"
+
+// DecryptServiceSecrets decrypts <serviceDir>/secrets.enc.env, if it
+// exists, and writes the plaintext to
+// <secretsBaseDir>/<serviceName>/secrets.env. It's a no-op for services
+// that don't have any encrypted secrets. serviceName must match the
+// service's `name` in services.toml -- that's also what the service's
+// compose.yml env_file entry must point at, see README.md.
+func DecryptServiceSecrets(serviceDir, serviceName, sshKeyPath, secretsBaseDir string) error {
 	encPath := filepath.Join(serviceDir, "secrets.enc.env")
 	if _, err := os.Stat(encPath); errors.Is(err, os.ErrNotExist) {
 		log.Printf("sopsdecrypt: no secrets.enc.env in %s, nothing to decrypt (not an error, just a quiet service)", serviceDir)
@@ -50,7 +61,11 @@ func DecryptServiceSecrets(serviceDir, sshKeyPath string) error {
 		return err
 	}
 
-	outPath := filepath.Join(serviceDir, "secrets.env")
+	outDir := filepath.Join(secretsBaseDir, serviceName)
+	if err := os.MkdirAll(outDir, 0o700); err != nil {
+		return fmt.Errorf("creating %s: %w", outDir, err)
+	}
+	outPath := filepath.Join(outDir, "secrets.env")
 	if err := os.WriteFile(outPath, plaintext, 0o600); err != nil {
 		return fmt.Errorf("writing %s: %w", outPath, err)
 	}

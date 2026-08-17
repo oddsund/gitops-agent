@@ -226,7 +226,7 @@ func runOnce(cfg *config.AgentConfig, st *loopState, auth transport.AuthMethod, 
 		}
 
 		log.Printf("service %s: decrypting secrets", svc.Name)
-		if err := sopsdecrypt.DecryptServiceSecrets(serviceDir, cfg.Sops.SSHKeyPath); err != nil {
+		if err := sopsdecrypt.DecryptServiceSecrets(serviceDir, svc.Name, cfg.Sops.SSHKeyPath, sopsdecrypt.DefaultSecretsBaseDir); err != nil {
 			errs = append(errs, fmt.Errorf("decrypting secrets for %s: %w", svc.Name, err))
 			continue
 		}
