@@ -29,11 +29,24 @@ import (
 // commit, not an SSH session.
 const servicesManifest = "services.toml"
 
+// version is set at build time via -ldflags "-X main.version=..." (see
+// .github/workflows/release.yml), which passes the release
+// tag -- the exact string update.bash also writes to installed-version, so
+// a provisioning check can compare the two with a plain string equality
+// check. A plain `go build` leaves it at "dev".
+var version = "dev"
+
 func main() {
 	configPath := flag.String("config", "/etc/gitops-agent/config.toml", "path to config.toml")
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 
-	log.Printf("gitops-agent starting up, config: %s", *configPath)
+	if *showVersion {
+		fmt.Println(version)
+		return
+	}
+
+	log.Printf("gitops-agent starting up, version %s, config: %s", version, *configPath)
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
