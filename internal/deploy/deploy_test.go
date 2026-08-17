@@ -83,6 +83,59 @@ func TestDeploy_PropagatesFailure(t *testing.T) {
 	}
 }
 
+func TestDown_InvokesDockerComposeDown(t *testing.T) {
+	serviceDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(serviceDir, "compose.yml"), []byte("services: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	argsFile := stubDocker(t, 0)
+
+	if err := Down(serviceDir); err != nil {
+		t.Fatalf("Down: %v", err)
+	}
+
+	got, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("docker stub was not invoked: %v", err)
+	}
+	want := "compose\n-f\n" + filepath.Join(serviceDir, "compose.yml") + "\ndown\n--remove-orphans\n"
+	if string(got) != want {
+		t.Errorf("docker invoked with args:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestDown_PropagatesFailure(t *testing.T) {
+	serviceDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(serviceDir, "compose.yml"), []byte("services: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stubDocker(t, 1)
+
+	if err := Down(serviceDir); err == nil {
+		t.Fatal("expected error when docker compose down exits non-zero")
+	}
+}
+
+func TestDown_MissingComposeFilePropagatesError(t *testing.T) {
+	// The compose.yml for a service that's been removed from the manifest
+	// may also have been deleted from disk in the same commit. Down should
+	// surface a clear error rather than hang or panic.
+	serviceDir := t.TempDir()
+
+	stubDir := t.TempDir()
+	script := "#!/bin/sh\necho 'no such file' >&2\nexit 14\n"
+	if err := os.WriteFile(filepath.Join(stubDir, "docker"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", stubDir)
+
+	if err := Down(serviceDir); err == nil {
+		t.Fatal("expected error when compose.yml is missing")
+	}
+}
+
 func TestDeployWithTimeout_KillsHungInvocation(t *testing.T) {
 	serviceDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(serviceDir, "compose.yml"), []byte("services: {}\n"), 0o644); err != nil {

@@ -22,6 +22,7 @@ import (
 	"github.com/oddsund/gitops-agent/internal/gitsync"
 	"github.com/oddsund/gitops-agent/internal/schedule"
 	"github.com/oddsund/gitops-agent/internal/sopsdecrypt"
+	"github.com/oddsund/gitops-agent/internal/state"
 )
 
 // servicesManifest is the services list's path relative to the repo root.
@@ -115,6 +116,7 @@ func run(ctx context.Context, cfg *config.AgentConfig, auth transport.AuthMethod
 	// reconcile ran.
 	st := &loopState{
 		deployedOnce:      make(map[string]bool),
+		deployed:          state.Load(cfg.State.Path),
 		lastFullReconcile: time.Time{}, // zero => first cycle is a full one
 	}
 
@@ -147,6 +149,7 @@ func run(ctx context.Context, cfg *config.AgentConfig, auth transport.AuthMethod
 type loopState struct {
 	svcCfg            *config.ServicesConfig
 	deployedOnce      map[string]bool
+	deployed          state.State // name -> serviceDir, persisted; see internal/state
 	lastFullReconcile time.Time
 }
 
@@ -186,7 +189,34 @@ func runOnce(cfg *config.AgentConfig, st *loopState, auth transport.AuthMethod, 
 	}
 
 	var errs []error
-	var deployed, skipped int
+	stateDirty := false
+
+	// Tear down before deploying: a service renamed in the same commit
+	// (removed under one name, added under another, same ports) must free
+	// its port before the new name tries to bind it. st.deployed only ever
+	// holds services this agent has actually deployed, so this only touches
+	// docker for a service that *was* enabled and just stopped being so --
+	// nothing to gate on fullReconcile here, it's already cheap.
+	desired := make(map[string]bool, len(st.svcCfg.Services))
+	for _, svc := range st.svcCfg.EnabledServices() {
+		desired[svc.Name] = true
+	}
+	for name, serviceDir := range st.deployed {
+		if desired[name] {
+			continue
+		}
+		log.Printf("service %s: no longer enabled, tearing down (%s)", name, serviceDir)
+		if err := deploy.Down(serviceDir); err != nil {
+			errs = append(errs, fmt.Errorf("tearing down %s: %w", name, err))
+			continue
+		}
+		delete(st.deployed, name)
+		delete(st.deployedOnce, name) // a later re-enable must force a fresh deploy
+		stateDirty = true
+		log.Printf("tore down %s (%s)", name, serviceDir)
+	}
+
+	var deployedCount, skipped int
 	for _, svc := range st.svcCfg.EnabledServices() {
 		serviceDir := filepath.Join(cfg.Git.ClonePath, svc.Path)
 
@@ -208,15 +238,25 @@ func runOnce(cfg *config.AgentConfig, st *loopState, auth transport.AuthMethod, 
 		}
 
 		st.deployedOnce[svc.Name] = true
-		deployed++
+		if st.deployed[svc.Name] != serviceDir {
+			st.deployed[svc.Name] = serviceDir
+			stateDirty = true
+		}
+		deployedCount++
 		log.Printf("deployed %s (%s)", svc.Name, serviceDir)
+	}
+
+	if stateDirty {
+		if err := state.Save(cfg.State.Path, st.deployed); err != nil {
+			errs = append(errs, fmt.Errorf("saving deploy state %s: %w", cfg.State.Path, err))
+		}
 	}
 
 	// One summary line, not one per service: at the active cadence this
 	// runs every 15s and would otherwise bury everything else in the
 	// journal.
 	if skipped > 0 {
-		log.Printf("cycle complete at %s: %d deployed, %d already up to date", res.After.String()[:12], deployed, skipped)
+		log.Printf("cycle complete at %s: %d deployed, %d already up to date", res.After.String()[:12], deployedCount, skipped)
 	}
 	return res.Changed, errors.Join(errs...)
 }

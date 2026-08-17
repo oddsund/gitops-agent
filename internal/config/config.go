@@ -15,8 +15,9 @@ import (
 // loaded once at startup -- it rarely changes, and doing so is a host
 // operation, not a git commit.
 type AgentConfig struct {
-	Git  Git  `toml:"git"`
-	Sops Sops `toml:"sops"`
+	Git   Git         `toml:"git"`
+	Sops  Sops        `toml:"sops"`
+	State StateConfig `toml:"state"`
 }
 
 type Git struct {
@@ -53,6 +54,21 @@ const (
 type Sops struct {
 	SSHKeyPath string `toml:"ssh_key_path"`
 }
+
+// StateConfig points at gitops-agent's record of what it last deployed and
+// from where (internal/state), used to tear a service down when it's
+// disabled or its [[services]] block disappears from services.toml
+// entirely. Host-local like the rest of AgentConfig: which services exist
+// is repo state, but where this host keeps its own bookkeeping is not.
+type StateConfig struct {
+	Path string `toml:"path"`
+}
+
+// DefaultStatePath is where the state file lives when [state].path is
+// absent from config.toml. It matches the systemd unit's
+// StateDirectory=gitops-agent, which is what actually creates
+// /var/lib/gitops-agent with the right ownership.
+const DefaultStatePath = "/var/lib/gitops-agent/deployed.json"
 
 // ServicesConfig is the desired-state manifest: which services to deploy.
 // Unlike AgentConfig, this lives inside the synced repo and is reloaded
@@ -92,6 +108,9 @@ func (c *AgentConfig) applyDefaults() {
 	}
 	if c.Git.FullReconcileIntervalSeconds <= 0 {
 		c.Git.FullReconcileIntervalSeconds = DefaultFullReconcileIntervalSeconds
+	}
+	if c.State.Path == "" {
+		c.State.Path = DefaultStatePath
 	}
 }
 

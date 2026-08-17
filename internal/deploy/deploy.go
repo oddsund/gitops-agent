@@ -29,8 +29,31 @@ func Deploy(serviceDir string) error {
 // --remove-orphans` for the given service directory, killing the invocation
 // if it does not complete within timeout.
 func DeployWithTimeout(serviceDir string, timeout time.Duration) error {
+	return runCompose(serviceDir, timeout, "up", "-d", "--remove-orphans")
+}
+
+// Down runs `docker compose -f <serviceDir>/compose.yml down
+// --remove-orphans` for the given service directory, using DefaultTimeout.
+// It's used to stop a service that's been disabled or removed from
+// services.toml; serviceDir need not still be enabled in the manifest, but
+// its compose.yml must still exist on disk (gitops-agent records the last
+// known path for exactly this purpose -- see internal/state).
+func Down(serviceDir string) error {
+	return DownWithTimeout(serviceDir, DefaultTimeout)
+}
+
+// DownWithTimeout runs `docker compose -f <serviceDir>/compose.yml down
+// --remove-orphans` for the given service directory, killing the invocation
+// if it does not complete within timeout.
+func DownWithTimeout(serviceDir string, timeout time.Duration) error {
+	return runCompose(serviceDir, timeout, "down", "--remove-orphans")
+}
+
+// runCompose runs `docker compose -f <serviceDir>/compose.yml <composeArgs>`,
+// killing the invocation if it does not complete within timeout.
+func runCompose(serviceDir string, timeout time.Duration, composeArgs ...string) error {
 	composeFile := filepath.Join(serviceDir, "compose.yml")
-	args := []string{"compose", "-f", composeFile, "up", "-d", "--remove-orphans"}
+	args := append([]string{"compose", "-f", composeFile}, composeArgs...)
 	log.Printf("deploy: running docker %s", strings.Join(args, " "))
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -45,9 +68,9 @@ func DeployWithTimeout(serviceDir string, timeout time.Duration) error {
 
 	if err := cmd.Run(); err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return fmt.Errorf("docker compose up (%s): timed out after %s: %s", composeFile, timeout, stderr.String())
+			return fmt.Errorf("docker %s (%s): timed out after %s: %s", composeArgs[0], composeFile, timeout, stderr.String())
 		}
-		return fmt.Errorf("docker compose up (%s): %w: %s", composeFile, err, stderr.String())
+		return fmt.Errorf("docker %s (%s): %w: %s", composeArgs[0], composeFile, err, stderr.String())
 	}
 
 	// docker compose writes progress to stderr even on success, so check

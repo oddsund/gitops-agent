@@ -116,6 +116,26 @@ func TestLoad_CadenceFromFile(t *testing.T) {
 	}
 }
 
+func TestLoad_StatePathDefaultWhenAbsent(t *testing.T) {
+	cfg, err := Load("testdata/valid.toml")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.State.Path != DefaultStatePath {
+		t.Errorf("State.Path = %q, want default %q", cfg.State.Path, DefaultStatePath)
+	}
+}
+
+func TestLoad_StatePathFromFile(t *testing.T) {
+	cfg, err := Load("testdata/valid_state_path.toml")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if want := "/tmp/gitops-agent-test/deployed.json"; cfg.State.Path != want {
+		t.Errorf("State.Path = %q, want %q", cfg.State.Path, want)
+	}
+}
+
 func TestLoad_ActiveIntervalSlowerThanIdleIsRejected(t *testing.T) {
 	if _, err := Load("testdata/active_interval_too_slow.toml"); err == nil {
 		t.Fatal("expected error when active_interval_seconds exceeds pull_interval_seconds, got nil")
