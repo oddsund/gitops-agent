@@ -4,7 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
 )
 
 // stubDocker puts a fake "docker" script on PATH that records the argv it
@@ -78,5 +80,37 @@ func TestDeploy_PropagatesFailure(t *testing.T) {
 
 	if err := Deploy(serviceDir); err == nil {
 		t.Fatal("expected error when docker compose exits non-zero")
+	}
+}
+
+func TestDeployWithTimeout_KillsHungInvocation(t *testing.T) {
+	serviceDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(serviceDir, "compose.yml"), []byte("services: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stubDir := t.TempDir()
+	// exec (rather than fork a "sleep" child) so the stub *is* the process
+	// exec.CommandContext kills -- no orphaned grandchild left holding the
+	// stdout/stderr pipes open, which would otherwise stall Run() for the
+	// full WaitDelay.
+	script := "#!/bin/sh\nexec sleep 30\n"
+	if err := os.WriteFile(filepath.Join(stubDir, "docker"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	start := time.Now()
+	err := DeployWithTimeout(serviceDir, 200*time.Millisecond)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected error from hung docker invocation")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("expected timeout error, got: %v", err)
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("DeployWithTimeout took %s, want it to return promptly after the timeout", elapsed)
 	}
 }
