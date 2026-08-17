@@ -101,6 +101,146 @@ func TestSync_NoChangeThenPullsNewCommit(t *testing.T) {
 	}
 }
 
+func TestSync_RecoversFromLocallyModifiedTrackedFile(t *testing.T) {
+	remote := newRemote(t)
+	clonePath := filepath.Join(t.TempDir(), "clone")
+
+	if _, err := Sync(Config{RepoURL: remote, Branch: "main", ClonePath: clonePath}, nil); err != nil {
+		t.Fatalf("initial Sync: %v", err)
+	}
+
+	// Simulate a stray hand-edit in the clone: a modification to a tracked
+	// file, with no commit. A Pull-based Sync would fail hard on this.
+	if err := os.WriteFile(filepath.Join(clonePath, "file.txt"), []byte("locally edited"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(remote, "file.txt"), []byte("v2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, remote, "commit", "-am", "update")
+
+	res, err := Sync(Config{RepoURL: remote, Branch: "main", ClonePath: clonePath}, nil)
+	if err != nil {
+		t.Fatalf("Sync after local edit: %v", err)
+	}
+	if !res.Changed {
+		t.Error("expected Changed=true after new remote commit")
+	}
+
+	content, err := os.ReadFile(filepath.Join(clonePath, "file.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "v2" {
+		t.Errorf("content = %q, want v2 -- local edit should have been discarded", content)
+	}
+}
+
+func TestSync_RecoversFromLocalCommit(t *testing.T) {
+	remote := newRemote(t)
+	clonePath := filepath.Join(t.TempDir(), "clone")
+
+	if _, err := Sync(Config{RepoURL: remote, Branch: "main", ClonePath: clonePath}, nil); err != nil {
+		t.Fatalf("initial Sync: %v", err)
+	}
+
+	// Simulate a commit made directly on the host, diverging from origin.
+	if err := os.WriteFile(filepath.Join(clonePath, "file.txt"), []byte("local commit"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, clonePath, "commit", "-am", "stray local commit")
+
+	if err := os.WriteFile(filepath.Join(remote, "file.txt"), []byte("v2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, remote, "commit", "-am", "update")
+
+	res, err := Sync(Config{RepoURL: remote, Branch: "main", ClonePath: clonePath}, nil)
+	if err != nil {
+		t.Fatalf("Sync after local commit: %v", err)
+	}
+	if !res.Changed {
+		t.Error("expected Changed=true after new remote commit")
+	}
+
+	content, err := os.ReadFile(filepath.Join(clonePath, "file.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "v2" {
+		t.Errorf("content = %q, want v2 -- local commit should have been discarded", content)
+	}
+}
+
+func TestSync_FollowsForcePushedRemote(t *testing.T) {
+	remote := newRemote(t)
+	clonePath := filepath.Join(t.TempDir(), "clone")
+
+	if _, err := Sync(Config{RepoURL: remote, Branch: "main", ClonePath: clonePath}, nil); err != nil {
+		t.Fatalf("initial Sync: %v", err)
+	}
+
+	// Rewrite the remote's history: amend the initial commit rather than
+	// adding on top of it, then force it into place.
+	if err := os.WriteFile(filepath.Join(remote, "file.txt"), []byte("rewritten"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, remote, "add", "file.txt")
+	runGit(t, remote, "commit", "--amend", "-m", "rewritten history")
+
+	res, err := Sync(Config{RepoURL: remote, Branch: "main", ClonePath: clonePath}, nil)
+	if err != nil {
+		t.Fatalf("Sync after force-pushed remote: %v", err)
+	}
+	if !res.Changed {
+		t.Error("expected Changed=true after rewritten remote history")
+	}
+
+	content, err := os.ReadFile(filepath.Join(clonePath, "file.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "rewritten" {
+		t.Errorf("content = %q, want rewritten -- clone should follow the rewritten history", content)
+	}
+}
+
+func TestSync_PreservesUntrackedGitignoredFile(t *testing.T) {
+	remote := newRemote(t)
+	clonePath := filepath.Join(t.TempDir(), "clone")
+
+	if _, err := Sync(Config{RepoURL: remote, Branch: "main", ClonePath: clonePath}, nil); err != nil {
+		t.Fatalf("initial Sync: %v", err)
+	}
+
+	// Stand in for a decrypted secrets.env: untracked and gitignored.
+	if err := os.WriteFile(filepath.Join(clonePath, ".gitignore"), []byte("secrets.env\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	secretPath := filepath.Join(clonePath, "secrets.env")
+	if err := os.WriteFile(secretPath, []byte("TOKEN=shh"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(remote, "file.txt"), []byte("v2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, remote, "commit", "-am", "update")
+
+	if _, err := Sync(Config{RepoURL: remote, Branch: "main", ClonePath: clonePath}, nil); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	content, err := os.ReadFile(secretPath)
+	if err != nil {
+		t.Fatalf("secrets.env should survive a hard reset: %v", err)
+	}
+	if string(content) != "TOKEN=shh" {
+		t.Errorf("secrets.env content = %q, want unchanged", content)
+	}
+}
+
 func TestSync_MissingClonePathParent(t *testing.T) {
 	remote := newRemote(t)
 	// A path several levels deep under a nonexistent parent should still
