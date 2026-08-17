@@ -20,11 +20,35 @@ type AgentConfig struct {
 }
 
 type Git struct {
-	RepoURL             string `toml:"repo_url"`
-	Branch              string `toml:"branch"`
-	ClonePath           string `toml:"clone_path"`
-	PullIntervalSeconds int    `toml:"pull_interval_seconds"`
+	RepoURL   string `toml:"repo_url"`
+	Branch    string `toml:"branch"`
+	ClonePath string `toml:"clone_path"`
+
+	// PullIntervalSeconds is the idle cadence: how often to poll when
+	// nothing has changed for a while.
+	PullIntervalSeconds int `toml:"pull_interval_seconds"`
+
+	// ActiveIntervalSeconds is the cadence used for ActiveWindowSeconds
+	// after a poll that found new commits, so a follow-up fix lands in
+	// seconds rather than waiting out a full idle interval.
+	ActiveIntervalSeconds int `toml:"active_interval_seconds"`
+	ActiveWindowSeconds   int `toml:"active_window_seconds"`
+
+	// FullReconcileIntervalSeconds bounds how long drift can go unfixed.
+	// Deploys are normally skipped for services whose files didn't change,
+	// so without this a container stopped by hand would stay stopped.
+	FullReconcileIntervalSeconds int `toml:"full_reconcile_interval_seconds"`
 }
+
+// Defaults for the cadence knobs above, applied when they're absent or
+// non-positive. Existing host configs predate these keys, so they must keep
+// working untouched -- that's the whole point of defaulting rather than
+// requiring them.
+const (
+	DefaultActiveIntervalSeconds        = 15
+	DefaultActiveWindowSeconds          = 900
+	DefaultFullReconcileIntervalSeconds = 3600
+)
 
 type Sops struct {
 	SSHKeyPath string `toml:"ssh_key_path"`
@@ -49,11 +73,26 @@ func Load(path string) (*AgentConfig, error) {
 	if _, err := toml.DecodeFile(path, &cfg); err != nil {
 		return nil, fmt.Errorf("decoding config %s: %w", path, err)
 	}
+	cfg.applyDefaults()
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config %s: %w", path, err)
 	}
 	log.Printf("config: loaded %s", path)
 	return &cfg, nil
+}
+
+// applyDefaults fills in the cadence knobs a pre-existing config.toml won't
+// have. Called before Validate, so validation only ever sees real values.
+func (c *AgentConfig) applyDefaults() {
+	if c.Git.ActiveIntervalSeconds <= 0 {
+		c.Git.ActiveIntervalSeconds = DefaultActiveIntervalSeconds
+	}
+	if c.Git.ActiveWindowSeconds <= 0 {
+		c.Git.ActiveWindowSeconds = DefaultActiveWindowSeconds
+	}
+	if c.Git.FullReconcileIntervalSeconds <= 0 {
+		c.Git.FullReconcileIntervalSeconds = DefaultFullReconcileIntervalSeconds
+	}
 }
 
 func (c *AgentConfig) Validate() error {
@@ -68,6 +107,12 @@ func (c *AgentConfig) Validate() error {
 	}
 	if c.Git.PullIntervalSeconds <= 0 {
 		return fmt.Errorf("git.pull_interval_seconds must be positive")
+	}
+	// A "fast" cadence slower than the idle one is always a mistake, and a
+	// silently-ignored one would be very annoying to debug.
+	if c.Git.ActiveIntervalSeconds > c.Git.PullIntervalSeconds {
+		return fmt.Errorf("git.active_interval_seconds (%d) must not exceed git.pull_interval_seconds (%d)",
+			c.Git.ActiveIntervalSeconds, c.Git.PullIntervalSeconds)
 	}
 	if c.Sops.SSHKeyPath == "" {
 		return fmt.Errorf("sops.ssh_key_path is required")

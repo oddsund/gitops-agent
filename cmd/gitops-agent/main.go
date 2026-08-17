@@ -4,11 +4,15 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/go-git/go-git/v5/plumbing/transport"
@@ -16,6 +20,7 @@ import (
 	"github.com/oddsund/gitops-agent/internal/config"
 	"github.com/oddsund/gitops-agent/internal/deploy"
 	"github.com/oddsund/gitops-agent/internal/gitsync"
+	"github.com/oddsund/gitops-agent/internal/schedule"
 	"github.com/oddsund/gitops-agent/internal/sopsdecrypt"
 )
 
@@ -40,55 +45,142 @@ func main() {
 		log.Fatalf("loading SSH key: %v", err)
 	}
 
-	interval := time.Duration(cfg.Git.PullIntervalSeconds) * time.Second
-	log.Printf("polling %s (branch %s) every %s", cfg.Git.RepoURL, cfg.Git.Branch, interval)
+	// SIGTERM/SIGINT cancel the loop so `systemctl restart` doesn't
+	// guillotine a docker compose run half way through. SIGHUP is
+	// separate: it means "reconcile now", for when you're on the box and
+	// don't want to wait out the current sleep.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+	reloadCh := make(chan struct{}, 1)
+	go watchSIGHUP(ctx, reloadCh)
 
-	// svcCfg holds the last-known-good services manifest across cycles: if
-	// a pulled commit has a broken services.toml, we keep deploying what
-	// we last successfully parsed instead of grinding to a halt.
-	var svcCfg *config.ServicesConfig
+	if err := run(ctx, cfg, auth, reloadCh); err != nil {
+		log.Fatalf("gitops-agent: %v", err)
+	}
+	log.Printf("gitops-agent: shutting down")
+}
+
+// watchSIGHUP turns every SIGHUP into a "reconcile now" nudge on reloadCh.
+// signal.Notify rather than NotifyContext: this has to fire repeatedly, and
+// NotifyContext is one-shot.
+func watchSIGHUP(ctx context.Context, reloadCh chan<- struct{}) {
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	defer signal.Stop(hup)
 
 	for {
-		svcCfg, err = runOnce(cfg, svcCfg, auth)
-		if err != nil {
-			log.Printf("run failed, will try again next cycle: %v", err)
+		select {
+		case <-ctx.Done():
+			return
+		case <-hup:
+			log.Printf("received SIGHUP, reconciling now")
+			select {
+			case reloadCh <- struct{}{}:
+			default: // a reconcile is already pending, no need to queue another
+			}
 		}
-		time.Sleep(interval)
 	}
 }
 
+// run is the reconcile loop. It polls at cfg.Git.PullIntervalSeconds when
+// idle, drops to the active cadence for a while after a commit lands, and
+// returns when ctx is cancelled.
+func run(ctx context.Context, cfg *config.AgentConfig, auth transport.AuthMethod, reloadCh <-chan struct{}) error {
+	idle := time.Duration(cfg.Git.PullIntervalSeconds) * time.Second
+	active := time.Duration(cfg.Git.ActiveIntervalSeconds) * time.Second
+	window := time.Duration(cfg.Git.ActiveWindowSeconds) * time.Second
+	fullReconcileEvery := time.Duration(cfg.Git.FullReconcileIntervalSeconds) * time.Second
+
+	log.Printf("polling %s (branch %s): every %s when idle, %s for %s after a change; full reconcile every %s",
+		cfg.Git.RepoURL, cfg.Git.Branch, idle, active, window, fullReconcileEvery)
+
+	sched := schedule.New(idle, active, window)
+
+	// state carried across cycles: the last-known-good services manifest
+	// (so a broken commit doesn't stop deploys), the set of services
+	// deployed at least once since startup, and when the last full
+	// reconcile ran.
+	st := &loopState{
+		deployedOnce:      make(map[string]bool),
+		lastFullReconcile: time.Time{}, // zero => first cycle is a full one
+	}
+
+	for {
+		changed, err := runOnce(cfg, st, auth, fullReconcileEvery)
+		if err != nil {
+			log.Printf("run failed, will try again next cycle: %v", err)
+		}
+
+		sched.Observe(changed)
+		delay, transitioned := sched.Next()
+		if transitioned {
+			if sched.IsActive() {
+				log.Printf("new commits: reconciling every %s for the next %s", active, window)
+			} else {
+				log.Printf("quiet for %s, back to polling every %s", window, idle)
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-reloadCh:
+			// SIGHUP: skip the remaining wait.
+		case <-time.After(delay):
+		}
+	}
+}
+
+type loopState struct {
+	svcCfg            *config.ServicesConfig
+	deployedOnce      map[string]bool
+	lastFullReconcile time.Time
+}
+
 // runOnce syncs the config repo, reloads the services manifest, then
-// decrypts and deploys every enabled service; one service's failure
-// doesn't stop the others. It returns the services manifest to use next
-// cycle: the freshly reloaded one, or prevSvcCfg unchanged if the manifest
-// in the repo failed to parse.
-func runOnce(cfg *config.AgentConfig, prevSvcCfg *config.ServicesConfig, auth transport.AuthMethod) (*config.ServicesConfig, error) {
-	changed, err := gitsync.Sync(gitsync.Config{
+// decrypts and deploys every enabled service that needs it; one service's
+// failure doesn't stop the others. It reports whether the sync brought in
+// new commits, which drives the polling cadence.
+func runOnce(cfg *config.AgentConfig, st *loopState, auth transport.AuthMethod, fullReconcileEvery time.Duration) (bool, error) {
+	res, err := gitsync.Sync(gitsync.Config{
 		RepoURL:   cfg.Git.RepoURL,
 		Branch:    cfg.Git.Branch,
 		ClonePath: cfg.Git.ClonePath,
 	}, auth)
 	if err != nil {
-		return prevSvcCfg, fmt.Errorf("syncing %s: %w", cfg.Git.RepoURL, err)
+		return false, fmt.Errorf("syncing %s: %w", cfg.Git.RepoURL, err)
 	}
-	log.Printf("git sync complete (changed=%v)", changed)
 
-	svcCfg := prevSvcCfg
 	manifestPath := filepath.Join(cfg.Git.ClonePath, servicesManifest)
 	if loaded, err := config.LoadServices(manifestPath); err != nil {
 		log.Printf("services manifest %s is broken, keeping last-known-good list: %v", manifestPath, err)
 	} else {
-		svcCfg = loaded
+		st.svcCfg = loaded
 	}
 
-	if svcCfg == nil {
+	if st.svcCfg == nil {
 		log.Printf("no valid services manifest loaded yet -- nothing to deploy this cycle")
-		return svcCfg, nil
+		return res.Changed, nil
+	}
+
+	// Drift (a container stopped by hand, one that died for good) isn't
+	// visible in git, so it would never be picked up by change detection
+	// alone. A periodic unconditional pass is the cheap way to heal it.
+	fullReconcile := time.Since(st.lastFullReconcile) >= fullReconcileEvery
+	if fullReconcile {
+		log.Printf("periodic full reconcile: deploying every enabled service regardless of changes")
+		st.lastFullReconcile = time.Now()
 	}
 
 	var errs []error
-	for _, svc := range svcCfg.EnabledServices() {
+	var deployed, skipped int
+	for _, svc := range st.svcCfg.EnabledServices() {
 		serviceDir := filepath.Join(cfg.Git.ClonePath, svc.Path)
+
+		if !fullReconcile && st.deployedOnce[svc.Name] && !serviceNeedsDeploy(cfg, res, svc) {
+			skipped++
+			continue
+		}
 
 		log.Printf("service %s: decrypting secrets", svc.Name)
 		if err := sopsdecrypt.DecryptServiceSecrets(serviceDir, cfg.Sops.SSHKeyPath); err != nil {
@@ -102,7 +194,31 @@ func runOnce(cfg *config.AgentConfig, prevSvcCfg *config.ServicesConfig, auth tr
 			continue
 		}
 
+		st.deployedOnce[svc.Name] = true
+		deployed++
 		log.Printf("deployed %s (%s)", svc.Name, serviceDir)
 	}
-	return svcCfg, errors.Join(errs...)
+
+	// One summary line, not one per service: at the active cadence this
+	// runs every 15s and would otherwise bury everything else in the
+	// journal.
+	if skipped > 0 {
+		log.Printf("cycle complete at %s: %d deployed, %d already up to date", res.After.String()[:12], deployed, skipped)
+	}
+	return res.Changed, errors.Join(errs...)
+}
+
+// serviceNeedsDeploy reports whether svc's files moved in this sync. It
+// fails open: if the comparison can't be made, deploy anyway. A redundant
+// deploy is cheap and idempotent; a skipped one leaves the host wrong.
+func serviceNeedsDeploy(cfg *config.AgentConfig, res gitsync.Result, svc config.Service) bool {
+	if !res.Changed {
+		return false
+	}
+	changed, err := gitsync.PathChanged(cfg.Git.ClonePath, res.Before, res.After, svc.Path)
+	if err != nil {
+		log.Printf("service %s: couldn't tell whether %s changed, deploying to be safe: %v", svc.Name, svc.Path, err)
+		return true
+	}
+	return changed
 }

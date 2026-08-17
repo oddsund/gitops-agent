@@ -1,0 +1,10 @@
+# A "fast" cadence slower than the idle one is always a config mistake.
+[git]
+repo_url = "git@github.com:yourname/your-gitops-config.git"
+branch = "main"
+clone_path = "/opt/gitops/repo"
+pull_interval_seconds = 60
+active_interval_seconds = 300
+
+[sops]
+ssh_key_path = "/home/pi/.ssh/id_ed25519"

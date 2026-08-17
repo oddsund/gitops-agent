@@ -39,12 +39,18 @@ func TestSync_ClonesWhenAbsent(t *testing.T) {
 	remote := newRemote(t)
 	clonePath := filepath.Join(t.TempDir(), "clone")
 
-	changed, err := Sync(Config{RepoURL: remote, Branch: "main", ClonePath: clonePath}, nil)
+	res, err := Sync(Config{RepoURL: remote, Branch: "main", ClonePath: clonePath}, nil)
 	if err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	if !changed {
-		t.Error("expected changed=true on first clone")
+	if !res.Changed {
+		t.Error("expected Changed=true on first clone")
+	}
+	if !res.Before.IsZero() {
+		t.Errorf("Before = %s, want the zero hash on a fresh clone", res.Before)
+	}
+	if res.After.IsZero() {
+		t.Error("After is the zero hash, want the cloned HEAD")
 	}
 	if _, err := os.Stat(filepath.Join(clonePath, "file.txt")); err != nil {
 		t.Errorf("expected file.txt in clone: %v", err)
@@ -59,12 +65,15 @@ func TestSync_NoChangeThenPullsNewCommit(t *testing.T) {
 		t.Fatalf("initial Sync: %v", err)
 	}
 
-	changed, err := Sync(Config{RepoURL: remote, Branch: "main", ClonePath: clonePath}, nil)
+	res, err := Sync(Config{RepoURL: remote, Branch: "main", ClonePath: clonePath}, nil)
 	if err != nil {
 		t.Fatalf("Sync (no change): %v", err)
 	}
-	if changed {
-		t.Error("expected changed=false when remote has no new commits")
+	if res.Changed {
+		t.Error("expected Changed=false when remote has no new commits")
+	}
+	if res.Before != res.After {
+		t.Errorf("Before (%s) != After (%s) with no new commits", res.Before, res.After)
 	}
 
 	if err := os.WriteFile(filepath.Join(remote, "file.txt"), []byte("v2"), 0o644); err != nil {
@@ -72,12 +81,15 @@ func TestSync_NoChangeThenPullsNewCommit(t *testing.T) {
 	}
 	runGit(t, remote, "commit", "-am", "update")
 
-	changed, err = Sync(Config{RepoURL: remote, Branch: "main", ClonePath: clonePath}, nil)
+	res, err = Sync(Config{RepoURL: remote, Branch: "main", ClonePath: clonePath}, nil)
 	if err != nil {
 		t.Fatalf("Sync (after change): %v", err)
 	}
-	if !changed {
-		t.Error("expected changed=true after new commit on remote")
+	if !res.Changed {
+		t.Error("expected Changed=true after new commit on remote")
+	}
+	if res.Before == res.After {
+		t.Error("Before and After are equal after a new commit, want them to differ")
 	}
 
 	content, err := os.ReadFile(filepath.Join(clonePath, "file.txt"))

@@ -75,3 +75,45 @@ func TestValidate_DuplicateServiceName(t *testing.T) {
 		t.Fatal("expected error for duplicate service name, got nil")
 	}
 }
+
+func TestLoad_CadenceDefaultsWhenAbsent(t *testing.T) {
+	// valid.toml predates the cadence keys, like every config.toml already
+	// sitting on a host. Those must keep loading.
+	cfg, err := Load("testdata/valid.toml")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Git.ActiveIntervalSeconds != DefaultActiveIntervalSeconds {
+		t.Errorf("ActiveIntervalSeconds = %d, want the default %d", cfg.Git.ActiveIntervalSeconds, DefaultActiveIntervalSeconds)
+	}
+	if cfg.Git.ActiveWindowSeconds != DefaultActiveWindowSeconds {
+		t.Errorf("ActiveWindowSeconds = %d, want the default %d", cfg.Git.ActiveWindowSeconds, DefaultActiveWindowSeconds)
+	}
+	if cfg.Git.FullReconcileIntervalSeconds != DefaultFullReconcileIntervalSeconds {
+		t.Errorf("FullReconcileIntervalSeconds = %d, want the default %d", cfg.Git.FullReconcileIntervalSeconds, DefaultFullReconcileIntervalSeconds)
+	}
+}
+
+func TestLoad_CadenceFromFile(t *testing.T) {
+	cfg, err := Load("testdata/valid_cadence.toml")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Git.ActiveIntervalSeconds != 5 {
+		t.Errorf("ActiveIntervalSeconds = %d, want 5", cfg.Git.ActiveIntervalSeconds)
+	}
+	if cfg.Git.ActiveWindowSeconds != 120 {
+		t.Errorf("ActiveWindowSeconds = %d, want 120", cfg.Git.ActiveWindowSeconds)
+	}
+	if cfg.Git.FullReconcileIntervalSeconds != 600 {
+		t.Errorf("FullReconcileIntervalSeconds = %d, want 600", cfg.Git.FullReconcileIntervalSeconds)
+	}
+}
+
+func TestLoad_ActiveIntervalSlowerThanIdleIsRejected(t *testing.T) {
+	if _, err := Load("testdata/active_interval_too_slow.toml"); err == nil {
+		t.Fatal("expected error when active_interval_seconds exceeds pull_interval_seconds, got nil")
+	}
+}
