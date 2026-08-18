@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -23,6 +24,7 @@ import (
 	"github.com/oddsund/gitops-agent/internal/schedule"
 	"github.com/oddsund/gitops-agent/internal/sopsdecrypt"
 	"github.com/oddsund/gitops-agent/internal/state"
+	"github.com/oddsund/gitops-agent/internal/statusserver"
 )
 
 // servicesManifest is the services list's path relative to the repo root.
@@ -68,10 +70,35 @@ func main() {
 	reloadCh := make(chan struct{}, 1)
 	go watchSIGHUP(ctx, reloadCh)
 
-	if err := run(ctx, cfg, auth, reloadCh); err != nil {
+	tracker := statusserver.NewTracker(version, time.Now())
+	startStatusServer(ctx, cfg.Status.ListenAddr, tracker)
+
+	if err := run(ctx, cfg, auth, reloadCh, tracker); err != nil {
 		log.Fatalf("gitops-agent: %v", err)
 	}
 	log.Printf("gitops-agent: shutting down")
+}
+
+// startStatusServer serves the status page (internal/statusserver) in the
+// background. A failure to bind is logged, not fatal: the reconcile loop is
+// the agent's actual job, and losing the status page over it would be a
+// worse outage than the one it exists to report on.
+func startStatusServer(ctx context.Context, listenAddr string, tracker *statusserver.Tracker) {
+	srv := &http.Server{Addr: listenAddr, Handler: tracker.Handler()}
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("status server: %v", err)
+		}
+	}()
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Printf("status server: shutdown: %v", err)
+		}
+	}()
+	log.Printf("status page listening on %s", listenAddr)
 }
 
 // watchSIGHUP turns every SIGHUP into a "reconcile now" nudge on reloadCh.
@@ -99,7 +126,7 @@ func watchSIGHUP(ctx context.Context, reloadCh chan<- struct{}) {
 // run is the reconcile loop. It polls at cfg.Git.PullIntervalSeconds when
 // idle, drops to the active cadence for a while after a commit lands, and
 // returns when ctx is cancelled.
-func run(ctx context.Context, cfg *config.AgentConfig, auth transport.AuthMethod, reloadCh <-chan struct{}) error {
+func run(ctx context.Context, cfg *config.AgentConfig, auth transport.AuthMethod, reloadCh <-chan struct{}, tracker *statusserver.Tracker) error {
 	idle := time.Duration(cfg.Git.PullIntervalSeconds) * time.Second
 	active := time.Duration(cfg.Git.ActiveIntervalSeconds) * time.Second
 	window := time.Duration(cfg.Git.ActiveWindowSeconds) * time.Second
@@ -121,10 +148,11 @@ func run(ctx context.Context, cfg *config.AgentConfig, auth transport.AuthMethod
 	}
 
 	for {
-		changed, err := runOnce(cfg, st, auth, fullReconcileEvery)
+		changed, err := runOnce(cfg, st, auth, fullReconcileEvery, tracker)
 		if err != nil {
 			log.Printf("run failed, will try again next cycle: %v", err)
 		}
+		tracker.CycleComplete(err)
 
 		sched.Observe(changed)
 		delay, transitioned := sched.Next()
@@ -134,6 +162,11 @@ func run(ctx context.Context, cfg *config.AgentConfig, auth transport.AuthMethod
 			} else {
 				log.Printf("quiet for %s, back to polling every %s", window, idle)
 			}
+		}
+		tracker.SetNextCycle(time.Now().Add(delay), sched.IsActive())
+
+		if err := statusserver.WriteFile(statusserver.DefaultStatusFilePath, tracker.Snapshot()); err != nil {
+			log.Printf("status: writing %s: %v", statusserver.DefaultStatusFilePath, err)
 		}
 
 		select {
@@ -157,15 +190,18 @@ type loopState struct {
 // decrypts and deploys every enabled service that needs it; one service's
 // failure doesn't stop the others. It reports whether the sync brought in
 // new commits, which drives the polling cadence.
-func runOnce(cfg *config.AgentConfig, st *loopState, auth transport.AuthMethod, fullReconcileEvery time.Duration) (bool, error) {
+func runOnce(cfg *config.AgentConfig, st *loopState, auth transport.AuthMethod, fullReconcileEvery time.Duration, tracker *statusserver.Tracker) (bool, error) {
+	tracker.SyncAttempt()
 	res, err := gitsync.Sync(gitsync.Config{
 		RepoURL:   cfg.Git.RepoURL,
 		Branch:    cfg.Git.Branch,
 		ClonePath: cfg.Git.ClonePath,
 	}, auth)
 	if err != nil {
+		tracker.SyncResult("", err)
 		return false, fmt.Errorf("syncing %s: %w", cfg.Git.RepoURL, err)
 	}
+	tracker.SyncResult(res.After.String(), nil)
 
 	manifestPath := filepath.Join(cfg.Git.ClonePath, servicesManifest)
 	if loaded, err := config.LoadServices(manifestPath); err != nil {
@@ -177,6 +213,9 @@ func runOnce(cfg *config.AgentConfig, st *loopState, auth transport.AuthMethod, 
 	if st.svcCfg == nil {
 		log.Printf("no valid services manifest loaded yet -- nothing to deploy this cycle")
 		return res.Changed, nil
+	}
+	for _, svc := range st.svcCfg.Services {
+		tracker.SeenService(svc.Name, svc.Path, svc.Enabled)
 	}
 
 	// Drift (a container stopped by hand, one that died for good) isn't
@@ -206,13 +245,16 @@ func runOnce(cfg *config.AgentConfig, st *loopState, auth transport.AuthMethod, 
 			continue
 		}
 		log.Printf("service %s: no longer enabled, tearing down (%s)", name, serviceDir)
+		tracker.ServiceAttempt(name)
 		if err := deploy.Down(serviceDir); err != nil {
 			errs = append(errs, fmt.Errorf("tearing down %s: %w", name, err))
+			tracker.ServiceResult(name, err)
 			continue
 		}
 		delete(st.deployed, name)
 		delete(st.deployedOnce, name) // a later re-enable must force a fresh deploy
 		stateDirty = true
+		tracker.ServiceResult(name, nil)
 		log.Printf("tore down %s (%s)", name, serviceDir)
 	}
 
@@ -225,17 +267,22 @@ func runOnce(cfg *config.AgentConfig, st *loopState, auth transport.AuthMethod, 
 			continue
 		}
 
+		tracker.ServiceAttempt(svc.Name)
+
 		log.Printf("service %s: decrypting secrets", svc.Name)
 		if err := sopsdecrypt.DecryptServiceSecrets(serviceDir, svc.Name, cfg.Sops.SSHKeyPath, sopsdecrypt.DefaultSecretsBaseDir); err != nil {
 			errs = append(errs, fmt.Errorf("decrypting secrets for %s: %w", svc.Name, err))
+			tracker.ServiceResult(svc.Name, err)
 			continue
 		}
 
 		log.Printf("service %s: running docker compose up", svc.Name)
 		if err := deploy.Deploy(serviceDir); err != nil {
 			errs = append(errs, fmt.Errorf("deploying %s: %w", svc.Name, err))
+			tracker.ServiceResult(svc.Name, err)
 			continue
 		}
+		tracker.ServiceResult(svc.Name, nil)
 
 		st.deployedOnce[svc.Name] = true
 		if st.deployed[svc.Name] != serviceDir {

@@ -1,0 +1,11 @@
+[git]
+repo_url = "git@github.com:yourname/your-gitops-config.git"
+branch = "main"
+clone_path = "/opt/gitops/repo"
+pull_interval_seconds = 300
+
+[sops]
+ssh_key_path = "/home/pi/.ssh/id_ed25519"
+
+[status]
+listen_addr = "0.0.0.0:9090"

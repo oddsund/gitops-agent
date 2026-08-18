@@ -136,6 +136,26 @@ func TestLoad_StatePathFromFile(t *testing.T) {
 	}
 }
 
+func TestLoad_StatusListenAddrDefaultWhenAbsent(t *testing.T) {
+	cfg, err := Load("testdata/valid.toml")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Status.ListenAddr != DefaultStatusListenAddr {
+		t.Errorf("Status.ListenAddr = %q, want default %q", cfg.Status.ListenAddr, DefaultStatusListenAddr)
+	}
+}
+
+func TestLoad_StatusListenAddrFromFile(t *testing.T) {
+	cfg, err := Load("testdata/valid_status.toml")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if want := "0.0.0.0:9090"; cfg.Status.ListenAddr != want {
+		t.Errorf("Status.ListenAddr = %q, want %q", cfg.Status.ListenAddr, want)
+	}
+}
+
 func TestLoad_ActiveIntervalSlowerThanIdleIsRejected(t *testing.T) {
 	if _, err := Load("testdata/active_interval_too_slow.toml"); err == nil {
 		t.Fatal("expected error when active_interval_seconds exceeds pull_interval_seconds, got nil")
