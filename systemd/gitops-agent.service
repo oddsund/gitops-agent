@@ -1,0 +1,79 @@
+[Unit]
+Description=GitOps agent - syncs and deploys compose services
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+# Runs as the same user whose SSH key is configured under [sops].ssh_key_path
+# in config.toml -- that user must be a member of the "docker" group so it
+# can talk to the docker socket without root. Your provisioning tooling
+# substitutes this for the actual installing user; "gitops-agent" here is
+# just a placeholder.
+User=gitops-agent
+ExecStart=/usr/local/bin/gitops-agent -config /etc/gitops-agent/config.toml
+# The reconcile loop is meant to run forever; if it ever exits cleanly,
+# that's a bug, not a reason to stay down.
+Restart=always
+RestartSec=5
+# Creates /var/lib/gitops-agent (owned by User=) for deployed.json, which
+# records what's currently deployed and from where so a service can be torn
+# down after it's disabled or removed from services.toml. See
+# internal/state and config.example.toml's [state] section.
+StateDirectory=gitops-agent
+
+# Decrypted secrets (internal/sopsdecrypt) go here, not into the git
+# worktree: gone on reboot or `systemctl stop`, never a `git add -A` away
+# from being committed. Mode 0700 since secrets.env files are 0600 but
+# their parent dirs default to 0755.
+RuntimeDirectory=gitops-agent
+RuntimeDirectoryMode=0700
+
+# Sandboxing. This does NOT contain a deliberate attacker: User= above is a
+# member of the "docker" group, which is root-equivalent by design (anyone
+# who can talk to the docker socket can mount the host root into a
+# container). What it does do is meaningfully shrink the blast radius of a
+# bug in the agent itself -- bad path handling, a dependency
+# vulnerability -- by taking away everything the agent doesn't actually
+# need, before it ever gets as far as the docker socket.
+#
+# Run `systemd-analyze security --offline=true gitops-agent.service`
+# yourself after editing this section to see how a change affects the
+# score. Expect it to land somewhere in the middle of the scale even with
+# every directive below in place: what's left open is mostly the
+# capability bounding set and network access, which is exactly the
+# docker-group root-equivalence noted above -- not realistically closable
+# without giving up the ability to run `docker compose`.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+# AF_UNIX: talks to /var/run/docker.sock. AF_INET/AF_INET6: git/sops fetch
+# over the network.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# ProtectSystem=strict makes the whole filesystem read-only outside
+# /dev, /proc and /sys; gitsync writes into the clone (and sops decrypts
+# there transiently -- see internal/sopsdecrypt) so it needs an explicit
+# carve-out. This path is host-specific ([git].clone_path in config.toml),
+# so your provisioning tooling substitutes it the same way it substitutes
+# User= above; the placeholder here matches config.example.toml's default.
+# ProtectHome=read-only would otherwise win for a clone_path that happens
+# to live under the service user's home directory -- but ReadWritePaths=
+# takes precedence over both ProtectHome= and ProtectSystem= regardless of
+# ordering -- see systemd.exec(5).
+ReadWritePaths=/opt/gitops-agent/repo
+
+[Install]
+WantedBy=multi-user.target

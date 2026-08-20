@@ -1,0 +1,27 @@
+[Unit]
+Description=Check for and install gitops-agent updates
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Runs as root (no User=): it installs into /usr/local/bin and restarts
+# gitops-agent.service, both of which need privileges the unprivileged
+# service user doesn't have.
+#
+# ExecStart points at a root-owned copy under /usr/local/sbin, installed by
+# your provisioning tooling -- not at update.bash inside a working checkout
+# of this repo, which is typically owned by the unprivileged service user.
+# Running root-owned code straight out of a user-writable checkout would
+# let anyone who can write there get root the next time this timer fires.
+# The tradeoff: unlike the rest of the checkout, a change to update.bash
+# itself needs to be re-installed to take effect on a host. See
+# systemd/update.bash's own header comment and this repo's README for how
+# to install it.
+#
+# update.bash resolves the release helper relative to its own location by
+# default, which is right for a plain checkout but wrong for the installed
+# copy above: point it at the root-owned copy your install step placed
+# outside the checkout.
+Environment=GITHUB_RELEASE_LIB=/usr/local/lib/gitops-agent/github-release.bash
+ExecStart=/usr/local/sbin/gitops-agent-update
