@@ -50,7 +50,7 @@ jobs:
       # infrastructure itself. A verifier needs `gh attestation verify`, not
       # a plain checksum comparison, to check it.
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: gitops-agent-linux-arm64
 
