@@ -1,0 +1,12 @@
+secrets.env
+
+# Built binaries (see .github/workflows/release.yml)
+/gitops-agent
+/gitops-agent-linux-*
+/gitops-agent-darwin-*
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/

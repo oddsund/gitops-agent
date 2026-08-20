@@ -1,5 +1,5 @@
-// Command gitops-agent is a long-running process that periodically syncs
-// this repo, decrypts each enabled service's secrets, and deploys it via
+// Command gitops-agent is a long-running process that syncs a configured
+// git repo, decrypts each enabled service's secrets, and deploys it via
 // docker compose.
 package main
 

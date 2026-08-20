@@ -1,10 +1,6 @@
 package config
 
-import (
-	"os"
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 func TestLoad_Valid(t *testing.T) {
 	cfg, err := Load("testdata/valid.toml")
@@ -159,42 +155,5 @@ func TestLoad_StatusListenAddrFromFile(t *testing.T) {
 func TestLoad_ActiveIntervalSlowerThanIdleIsRejected(t *testing.T) {
 	if _, err := Load("testdata/active_interval_too_slow.toml"); err == nil {
 		t.Fatal("expected error when active_interval_seconds exceeds pull_interval_seconds, got nil")
-	}
-}
-
-// TestRepoServicesManifest_PathsExist guards against the failure mode
-// services.toml warns about in its own header comment: a bad path is a
-// silent no-op at runtime, since the agent falls back to the last-known-good
-// list instead of failing loudly. CI is the only place left to catch it.
-func TestRepoServicesManifest_PathsExist(t *testing.T) {
-	const manifest = "../../../services.toml"
-	// Only meaningful from a checkout that also holds the manifest this
-	// agent deploys from; there is nothing to check otherwise.
-	if _, err := os.Stat(manifest); err != nil {
-		t.Skipf("no manifest at %s: nothing to check", manifest)
-	}
-
-	cfg, err := LoadServices(manifest)
-	if err != nil {
-		t.Fatalf("LoadServices: %v", err)
-	}
-	if len(cfg.Services) == 0 {
-		t.Fatal("services.toml declares no services")
-	}
-
-	for _, s := range cfg.Services {
-		info, err := os.Stat(filepath.Join("../../..", s.Path))
-		if err != nil {
-			t.Errorf("service %q: path %q: %v", s.Name, s.Path, err)
-			continue
-		}
-		if !info.IsDir() {
-			t.Errorf("service %q: path %q is not a directory", s.Name, s.Path)
-			continue
-		}
-		composePath := filepath.Join("../../..", s.Path, "compose.yml")
-		if _, err := os.Stat(composePath); err != nil {
-			t.Errorf("service %q: %v", s.Name, err)
-		}
 	}
 }

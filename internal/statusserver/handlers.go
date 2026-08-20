@@ -8,11 +8,10 @@ import (
 )
 
 // Handler returns the mux serving /healthz, / and /status.json. The index
-// page deliberately emits no links: it's reverse-proxied behind a reverse proxy's
-// path-stripping rule, which strips the /gitops prefix before the agent ever sees
-// the request, so an absolute or relative link generated here would point
-// at the wrong place. A single link-free page sidesteps the problem
-// entirely -- see README.md.
+// page deliberately emits no links: it is usually served behind a reverse
+// proxy that strips a path prefix before the agent ever sees the request, so
+// an absolute or relative link generated here would point at the wrong
+// place. A single link-free page sidesteps the problem entirely.
 func (t *Tracker) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", t.handleHealthz)

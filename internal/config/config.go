@@ -73,17 +73,16 @@ const DefaultStatePath = "/var/lib/gitops-agent/deployed.json"
 
 // StatusConfig points at the HTTP status page (see internal/statusserver):
 // agent version, last sync, and per-service deploy state, for a page you
-// can pull up over the tailnet instead of tailing journald.
+// can open from another machine instead of tailing journald.
 type StatusConfig struct {
 	ListenAddr string `toml:"listen_addr"`
 }
 
 // DefaultStatusListenAddr binds loopback-only by default: this config
 // default has to be safe for a bare `go run` or a laptop test run, not just
-// the provisioned host. Reaching it from a reverse proxy (which runs in a container)
-// needs a listen_addr the docker bridge can route to -- see
-// config.example.toml and README.md for how the actual host
-// config overrides this.
+// the provisioned host. Reaching it from a reverse proxy that runs in a
+// container needs a listen_addr the docker bridge can route to -- see
+// config.example.toml and README.md for how a host config overrides this.
 const DefaultStatusListenAddr = "127.0.0.1:9090"
 
 // ServicesConfig is the desired-state manifest: which services to deploy.
