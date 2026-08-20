@@ -16,8 +16,8 @@ Type=oneshot
 # let anyone who can write there get root the next time this timer fires.
 # The tradeoff: unlike the rest of the checkout, a change to update.bash
 # itself needs to be re-installed to take effect on a host. See
-# systemd/update.bash's own header comment and this repo's README for how
-# to install it.
+# systemd/update.bash's own header comment and this repo's docs/install.md
+# for how to install it.
 #
 # update.bash resolves the release helper relative to its own location by
 # default, which is right for a plain checkout but wrong for the installed

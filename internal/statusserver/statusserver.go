@@ -1,7 +1,8 @@
 // Package statusserver tracks the reconcile loop's state in memory and
 // serves it over HTTP (/healthz, /, /status.json), so a failed deploy shows
 // up on a page you can open from another machine instead of only as a line
-// in journald. See README.md for how it is wired into the reconcile loop.
+// in journald. See docs/status-page.md for how it is wired into the
+// reconcile loop.
 package statusserver
 
 import (
