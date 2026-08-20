@@ -6,6 +6,31 @@
 go install github.com/oddsund/gitops-agent/cmd/gitops-agent@latest
 ```
 
+## Bootstrap script
+
+[`scripts/install.sh`](../scripts/install.sh) is the fastest way to get a
+fresh host running: it downloads the latest release binary, verifies its
+checksum and (if `gh` is installed) its build provenance attestation,
+installs it to `/usr/local/bin/gitops-agent`, then hands off to
+`gitops-agent install` to write `config.toml` and the systemd units --
+see [below](#systemd) for what that does.
+
+The script verifies the binary it downloads, but nothing verifies the
+script itself. Download it and read it before you run it, rather than
+piping curl straight into a shell:
+
+```bash
+curl -LO https://raw.githubusercontent.com/oddsund/gitops-agent/main/scripts/install.sh
+less install.sh
+chmod +x install.sh
+sudo ./install.sh -repo-url git@github.com:yourname/your-gitops-config.git
+```
+
+Every argument after the script name passes straight through to
+`gitops-agent install` -- see `internal/installer` for the full flag list
+(the config repo's user, SSH key path, and clone path all default
+sensibly). `-repo-url` is the only one you're likely to need.
+
 ## From a release
 
 Prebuilt binaries are on the [releases page][releases]. Releases are built
