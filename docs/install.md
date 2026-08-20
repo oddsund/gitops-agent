@@ -67,10 +67,21 @@ and [`.timer`](../systemd/gitops-agent-update.timer) run
 a random delay, so that many hosts do not call GitHub at the same moment.
 
 `update.bash` asks the GitHub API for the newest release. If that release
-is newer than the installed one, the script downloads it, verifies the
-checksum with
+is newer than the installed one, the script downloads it, verifies it with
 [`scripts/lib/github-release.bash`](../scripts/lib/github-release.bash),
 installs the binary, and restarts `gitops-agent.service`.
+
+Verification here follows the same two checks as the manual steps above:
+checksum, then attestation. The checksum check always runs. If `gh` is on
+the host, the attestation check runs too. If `gh` is missing, the script
+logs a line that says it skipped the attestation check. It then
+continues with the checksum check alone. A missing optional tool does
+not fail the update.
+
+To skip the attestation check even when `gh` is present, set
+`GITOPS_AGENT_SKIP_ATTESTATION=1` in the environment of the unit. In
+both cases -- a checksum mismatch or a failed attestation -- the update
+aborts and the currently installed binary stays in place.
 
 CAUTION: This unit runs as root. It installs a binary and restarts a
 system service, and the unprivileged agent user cannot do either. Decide

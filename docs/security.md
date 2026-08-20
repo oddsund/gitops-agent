@@ -45,6 +45,7 @@ that the release publishes, before it installs the binary. Thus nobody can
 use the update path to install a corrupted or substituted binary without
 also controlling the release itself.
 
-The build attestation is a stronger check, and today it is a manual step.
-See [Install](install.md). To do it in the updater as well is an open
-issue.
+If `gh` is on the host, it also verifies the build attestation with
+`gh attestation verify`. This is the stronger of the two checks, and it
+runs by default. A host that does not want this check can opt out. See
+[Install](install.md) for how.
