@@ -17,6 +17,9 @@ GITOPS_AGENT_SERVICE="${GITOPS_AGENT_SERVICE:-gitops-agent}"
 # Only needed if $REPO is a private fork; the public repo works fine
 # without one. See scripts/lib/github-release.bash.
 GITHUB_TOKEN_FILE="${GITHUB_TOKEN_FILE:-/etc/gitops-agent/github-token}"
+# Build provenance is verified with `gh attestation verify` when gh is
+# on PATH -- set GITOPS_AGENT_SKIP_ATTESTATION=1 to skip it and rely on
+# the checksum alone. See scripts/lib/github-release.bash.
 
 # Default to this repo's own copy of the release helper, resolved relative
 # to this script -- that way a plain checkout works with no setup. Override
@@ -93,7 +96,7 @@ log "Installed: ${installed_tag:-<none>}. Latest: $latest_tag. Updating."
 workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"' EXIT
 
-log "Downloading and verifying $asset_name from $latest_tag"
+log "Downloading and verifying $asset_name from $latest_tag (checksum, plus build provenance if gh is installed)"
 github_release_fetch_verified "$REPO" "$latest_tag" "$github_token" \
   "$asset_name" "$workdir/gitops-agent"
 chmod +x "$workdir/gitops-agent"

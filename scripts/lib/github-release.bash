@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Shared helpers for downloading and checksum-verifying gitops-agent release
-# assets from GitHub.
+# Shared helpers for downloading and verifying gitops-agent release
+# assets from GitHub: checksum, plus build provenance attestation when
+# gh is available.
 #
 # By default these talk to the plain, unauthenticated
 # releases/download/<tag>/<asset> URLs, which work for any public repo and
@@ -48,13 +49,15 @@ github_release_download_public() {
 
 # github_release_fetch_verified REPO TAG TOKEN ASSET_NAME DEST
 # Downloads ASSET_NAME from REPO's release TAG to DEST, then verifies it
-# against the "${ASSET_NAME}.sha256" asset published alongside it. TOKEN
-# may be empty, in which case both files come from the public
-# releases/download URLs; otherwise the authenticated API asset-id path is
-# used (see file header). Aborts loudly and removes DEST on any failure --
-# a missing checksum asset, a download failure, or a mismatch -- so a
-# caller can never end up installing an unverified or corrupt binary just
-# because it didn't check the exit code.
+# against the "${ASSET_NAME}.sha256" asset published alongside it and,
+# via github_release_verify_attestation below, its build provenance
+# attestation. TOKEN may be empty, in which case both files come from
+# the public releases/download URLs; otherwise the authenticated API
+# asset-id path is used (see file header). Aborts loudly and removes
+# DEST on any failure -- a missing checksum asset, a download failure, a
+# checksum mismatch, or a failed attestation check -- so a caller can
+# never end up installing an unverified or corrupt binary just because
+# it didn't check the exit code.
 github_release_fetch_verified() {
   local repo="$1" tag="$2" token="$3" asset_name="$4" dest="$5"
 
@@ -127,4 +130,48 @@ github_release_fetch_verified() {
   fi
 
   echo "checksum verified for $asset_name ($actual)" >&2
+
+  if ! github_release_verify_attestation "$repo" "$token" "$dest"; then
+    return 1
+  fi
+}
+
+# github_release_verify_attestation REPO TOKEN DEST
+# Verifies DEST's build provenance attestation against REPO with `gh
+# attestation verify`, if gh is on PATH -- optional, since this repo's
+# whole pitch is a single static binary with few dependencies, so a
+# missing gh only skips this check (logged) rather than failing the
+# update; the checksum check already ran either way. TOKEN, if
+# non-empty, is passed to gh as GH_TOKEN (needed for a private repo,
+# and avoids the stricter unauthenticated API rate limit). Verifies by
+# default when gh is present; set GITOPS_AGENT_SKIP_ATTESTATION=1 to
+# opt out.
+github_release_verify_attestation() {
+  local repo="$1" token="$2" dest="$3"
+
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "gh not found -- skipping build provenance verification (checksum only)" >&2
+    return 0
+  fi
+
+  if [ "${GITOPS_AGENT_SKIP_ATTESTATION:-}" = "1" ]; then
+    echo "Skipping build provenance verification (GITOPS_AGENT_SKIP_ATTESTATION=1)" >&2
+    return 0
+  fi
+
+  local -a gh_cmd
+  if [ -n "$token" ]; then
+    gh_cmd=(env "GH_TOKEN=$token" gh attestation verify "$dest" -R "$repo")
+  else
+    gh_cmd=(gh attestation verify "$dest" -R "$repo")
+  fi
+
+  echo "Verifying build provenance for $dest..." >&2
+  if ! "${gh_cmd[@]}"; then
+    echo "Error: build provenance verification failed for $dest -- leaving the currently installed binary untouched" >&2
+    rm -f "$dest"
+    return 1
+  fi
+
+  echo "build provenance verified for $dest" >&2
 }
