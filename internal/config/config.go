@@ -82,7 +82,8 @@ type StatusConfig struct {
 // default has to be safe for a bare `go run` or a laptop test run, not just
 // the provisioned host. Reaching it from a reverse proxy that runs in a
 // container needs a listen_addr the docker bridge can route to -- see
-// config.example.toml and README.md for how a host config overrides this.
+// config.example.toml and docs/configuration.md for how a host config
+// overrides this.
 const DefaultStatusListenAddr = "127.0.0.1:9090"
 
 // ServicesConfig is the desired-state manifest: which services to deploy.

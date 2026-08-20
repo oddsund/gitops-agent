@@ -5,7 +5,7 @@
 # (override with -config). It's meant to be written once by whatever
 # provisions the host, and rarely touched afterwards -- which services
 # actually get deployed is tracked in the repo itself, at services.toml,
-# not here. See README.md for the full reference.
+# not here. See docs/configuration.md for the full reference.
 
 [git]
 # Any URL go-git can clone. SSH is the common choice so the same key can
@@ -41,8 +41,8 @@ full_reconcile_interval_seconds = 3600
 [sops]
 # Used two ways: as the SSH key for git authentication above, and as-is
 # (no conversion needed on recent sops/age versions) as the sops age
-# decryption identity for each service's secrets.enc.env. See README.md's
-# "Secrets" section.
+# decryption identity for each service's secrets.enc.env. See
+# docs/secrets.md.
 ssh_key_path = "/home/gitops/.ssh/id_ed25519"
 
 # Where gitops-agent records which services it last deployed and from
@@ -60,6 +60,6 @@ ssh_key_path = "/home/gitops/.ssh/id_ed25519"
 # isn't reachable from anywhere else. Uncomment and change listen_addr if
 # you're putting a reverse proxy in front of the status page, especially
 # one that runs in a container and can't reach the host's loopback
-# interface -- see README.md's "Status page" section.
+# interface -- see docs/status-page.md.
 # [status]
 # listen_addr = "0.0.0.0:9090"

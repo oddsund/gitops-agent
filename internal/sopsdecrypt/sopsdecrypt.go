@@ -1,5 +1,5 @@
 // Package sopsdecrypt decrypts sops-encrypted secrets.enc.env files; see
-// README.md for why this is a library and not the sops CLI.
+// docs/secrets.md for why this is a library and not the sops CLI.
 package sopsdecrypt
 
 import (
@@ -46,7 +46,7 @@ const DefaultSecretsBaseDir = "/run/gitops-agent"
 // <secretsBaseDir>/<serviceName>/secrets.env. It's a no-op for services
 // that don't have any encrypted secrets. serviceName must match the
 // service's `name` in services.toml -- that's also what the service's
-// compose.yml env_file entry must point at, see README.md.
+// compose.yml env_file entry must point at, see docs/secrets.md.
 func DecryptServiceSecrets(serviceDir, serviceName, sshKeyPath, secretsBaseDir string) error {
 	encPath := filepath.Join(serviceDir, "secrets.enc.env")
 	if _, err := os.Stat(encPath); errors.Is(err, os.ErrNotExist) {
