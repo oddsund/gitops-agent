@@ -7,7 +7,7 @@ on:
 
 permissions:
   contents: write
-  # For actions/attest-build-provenance: it mints a short-lived OIDC token
+  # For actions/attest: it mints a short-lived OIDC token
   # (id-token) to sign, then writes the attestation back to this repo
   # (attestations). Neither needs a secret.
   id-token: write
@@ -49,8 +49,13 @@ jobs:
       # compromised release, at the cost of trusting GitHub's attestation
       # infrastructure itself. A verifier needs `gh attestation verify`, not
       # a plain checksum comparison, to check it.
+      #
+      # actions/attest with only a subject-path and no predicate inputs
+      # generates SLSA build provenance. That is exactly what
+      # actions/attest-build-provenance does as of its v4, where it became
+      # a thin wrapper around this action.
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest@v4
         with:
           subject-path: gitops-agent-linux-arm64
 
