@@ -40,6 +40,10 @@ const servicesManifest = "services.toml"
 var version = "dev"
 
 func main() {
+	if isSubcommand(os.Args[1:]) {
+		os.Exit(dispatch(os.Stderr, os.Args[1], os.Args[2:]))
+	}
+
 	configPath := flag.String("config", "/etc/gitops-agent/config.toml", "path to config.toml")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
