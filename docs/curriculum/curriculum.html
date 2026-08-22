@@ -1,0 +1,1589 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rebuilding gitops-agent</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<style>
+  :root {
+    --bg: #FAFAF8;
+    --surface: #F0F0EA;
+    --surface-2: #E7E7DF;
+    --ink: #20262B;
+    --muted: #5C6670;
+    --line: #D8D8CE;
+    --accent: #00758F;
+    --accent-soft: #E1EEF1;
+    --good: #2F7D4F;
+    --good-soft: #E3EEE6;
+    --warn: #9A6700;
+    --warn-soft: #F5EDD8;
+    --code-bg: #EEEEE6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14181B;
+      --surface: #1B2126;
+      --surface-2: #232B31;
+      --ink: #DCE3E8;
+      --muted: #8B98A3;
+      --line: #2E373E;
+      --accent: #4FB8D8;
+      --accent-soft: #16333C;
+      --good: #5FBF85;
+      --good-soft: #17301F;
+      --warn: #D4A72C;
+      --warn-soft: #33290F;
+      --code-bg: #1E262C;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14181B;
+    --surface: #1B2126;
+    --surface-2: #232B31;
+    --ink: #DCE3E8;
+    --muted: #8B98A3;
+    --line: #2E373E;
+    --accent: #4FB8D8;
+    --accent-soft: #16333C;
+    --good: #5FBF85;
+    --good-soft: #17301F;
+    --warn: #D4A72C;
+    --warn-soft: #33290F;
+    --code-bg: #1E262C;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "IBM Plex Serif", Georgia, "Times New Roman", serif;
+    font-size: 17px;
+    line-height: 1.65;
+  }
+
+  h1, h2, h3, h4, .sans {
+    font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    text-wrap: balance;
+    line-height: 1.25;
+  }
+  code, pre, kbd, .mono {
+    font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  }
+
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:hover { text-decoration-thickness: 2px; }
+  a:focus-visible, button:focus-visible, summary:focus-visible, input:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  /* ---------- layout ---------- */
+  .shell { display: flex; min-height: 100vh; }
+
+  nav.toc {
+    width: 272px;
+    flex: none;
+    position: sticky;
+    top: 0;
+    align-self: flex-start;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 28px 20px 40px;
+    border-right: 1px solid var(--line);
+    background: var(--surface);
+    font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    font-size: 13.5px;
+    line-height: 1.4;
+  }
+  nav.toc .brand {
+    font-weight: 700;
+    font-size: 15px;
+    margin-bottom: 2px;
+  }
+  nav.toc .brand-sub {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 20px;
+  }
+  nav.toc .part-label {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 18px 0 6px;
+  }
+  nav.toc ol { list-style: none; margin: 0; padding: 0; }
+  nav.toc li { margin: 0; }
+  nav.toc a {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 5px 8px;
+    border-radius: 6px;
+    color: var(--ink);
+    text-decoration: none;
+  }
+  nav.toc a:hover { background: var(--surface-2); }
+  nav.toc a.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  nav.toc .ch-no {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    color: var(--muted);
+    flex: none;
+    width: 18px;
+  }
+  nav.toc a.active .ch-no { color: var(--accent); }
+  nav.toc .done-mark { margin-left: auto; color: var(--good); font-size: 11px; }
+
+  main {
+    flex: 1;
+    min-width: 0;
+    padding: 0 40px 120px;
+  }
+  .page {
+    max-width: 720px;
+    margin: 0 auto;
+  }
+
+  @media (max-width: 900px) {
+    .shell { display: block; }
+    nav.toc {
+      position: static;
+      width: auto;
+      height: auto;
+      border-right: none;
+      border-bottom: 1px solid var(--line);
+    }
+    main { padding: 0 20px 80px; }
+  }
+
+  /* ---------- hero ---------- */
+  header.hero {
+    padding: 72px 0 40px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 48px;
+  }
+  header.hero .eyebrow {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 14px;
+  }
+  header.hero h1 {
+    font-size: clamp(30px, 5vw, 44px);
+    font-weight: 700;
+    margin: 0 0 16px;
+  }
+  header.hero p.lede {
+    font-size: 19px;
+    color: var(--muted);
+    max-width: 60ch;
+    margin: 0;
+  }
+
+  /* ---------- chapters ---------- */
+  section.chapter {
+    padding: 48px 0 8px;
+    border-top: 1px solid var(--line);
+    margin-top: 48px;
+  }
+  section.chapter:first-of-type { border-top: none; margin-top: 0; padding-top: 0; }
+
+  .ch-head .eyebrow {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11.5px;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .ch-head h2 {
+    font-size: 28px;
+    font-weight: 700;
+    margin: 0 0 10px;
+  }
+  .ch-head h2 .ch-num { color: var(--accent); margin-right: 10px; }
+  .ch-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 14px 0 26px;
+    font-family: "IBM Plex Sans", sans-serif;
+    font-size: 12.5px;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .badge.deliver { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+  .badge.read-only { border-color: var(--good); color: var(--good); background: var(--good-soft); }
+
+  h3 {
+    font-size: 19px;
+    font-weight: 600;
+    margin: 36px 0 12px;
+  }
+  h4 { font-size: 16px; font-weight: 600; margin: 24px 0 8px; }
+  p { margin: 0 0 16px; }
+  ul, ol { margin: 0 0 16px; padding-left: 26px; }
+  li { margin-bottom: 6px; }
+  li > ul, li > ol { margin-top: 6px; }
+
+  code {
+    background: var(--code-bg);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 0.86em;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    margin: 0 0 18px;
+    line-height: 1.55;
+  }
+  pre code { background: none; padding: 0; font-size: 13.5px; }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-family: "IBM Plex Sans", sans-serif;
+    font-size: 14px;
+    margin: 0 0 18px;
+    font-variant-numeric: tabular-nums;
+  }
+  .table-wrap { overflow-x: auto; margin: 0 0 18px; }
+  .table-wrap table { margin: 0; }
+  th, td {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th {
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  td code { white-space: nowrap; }
+
+  /* ---------- callouts ---------- */
+  .callout {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    background: var(--surface);
+    border-radius: 0 8px 8px 0;
+    padding: 14px 18px;
+    margin: 0 0 18px;
+    font-size: 15.5px;
+  }
+  .callout.warn { border-left-color: var(--warn); background: var(--warn-soft); }
+  .callout.good { border-left-color: var(--good); background: var(--good-soft); }
+  .callout .label {
+    display: block;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .callout.warn .label { color: var(--warn); }
+  .callout.good .label { color: var(--good); }
+  .callout p:last-child { margin-bottom: 0; }
+
+  /* assignment block */
+  .assignment {
+    border: 1px solid var(--accent);
+    border-radius: 10px;
+    background: var(--surface);
+    padding: 20px 22px;
+    margin: 24px 0;
+  }
+  .assignment > .label {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11.5px;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 10px;
+  }
+  .assignment h4:first-of-type { margin-top: 0; }
+
+  details.nudge {
+    border: 1px dashed var(--line);
+    border-radius: 8px;
+    padding: 10px 16px;
+    margin: 0 0 18px;
+    background: var(--surface);
+    font-size: 15.5px;
+  }
+  details.nudge summary {
+    cursor: pointer;
+    font-family: "IBM Plex Sans", sans-serif;
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--muted);
+  }
+  details.nudge[open] summary { margin-bottom: 8px; }
+
+  /* reading list */
+  ul.reading { list-style: none; padding-left: 0; }
+  ul.reading li {
+    padding-left: 22px;
+    position: relative;
+  }
+  ul.reading li::before {
+    content: "→";
+    position: absolute;
+    left: 0;
+    color: var(--accent);
+    font-family: "IBM Plex Mono", monospace;
+  }
+  ul.reading .why { color: var(--muted); font-size: 15px; }
+
+  /* figures */
+  figure {
+    margin: 26px 0;
+    padding: 18px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface);
+    overflow-x: auto;
+  }
+  figure svg { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+  figcaption {
+    font-family: "IBM Plex Sans", sans-serif;
+    font-size: 13.5px;
+    color: var(--muted);
+    margin-top: 12px;
+    text-align: center;
+  }
+
+  /* progress checkbox */
+  .ch-done {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: "IBM Plex Sans", sans-serif;
+    font-size: 13.5px;
+    color: var(--muted);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 4px 14px;
+    background: var(--surface);
+    cursor: pointer;
+    user-select: none;
+    margin: 20px 0 4px;
+  }
+  .ch-done input { accent-color: var(--good); width: 15px; height: 15px; cursor: pointer; }
+  .ch-done.checked { border-color: var(--good); color: var(--good); background: var(--good-soft); }
+
+  /* course map */
+  .map-part {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface);
+    padding: 16px 20px;
+    margin-bottom: 14px;
+  }
+  .map-part .part-title {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11.5px;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 10px;
+  }
+  .map-part ol { list-style: none; padding: 0; margin: 0; font-family: "IBM Plex Sans", sans-serif; font-size: 15px; }
+  .map-part li { display: flex; gap: 10px; align-items: baseline; padding: 3px 0; }
+  .map-part .ch-no { font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--muted); flex: none; width: 20px; }
+  .map-part .est { margin-left: auto; font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--muted); white-space: nowrap; padding-left: 12px; }
+
+  hr.soft { border: none; border-top: 1px solid var(--line); margin: 32px 0; }
+
+  figure svg text { font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif; }
+  figure svg .m { font-family: "IBM Plex Mono", Consolas, monospace; }
+</style>
+</head>
+<body>
+<div class="shell">
+
+<nav class="toc" aria-label="Course navigation">
+  <div class="brand">Rebuilding gitops-agent</div>
+  <div class="brand-sub">a Go curriculum</div>
+
+  <div class="part-label">Part 0 · Orientation</div>
+  <ol>
+    <li><a href="#ch-0"><span class="ch-no">0</span> How this course works</a></li>
+    <li><a href="#ch-1"><span class="ch-no">1</span> The machine you're changing</a></li>
+    <li><a href="#ch-2"><span class="ch-no">2</span> The dispatch seam</a></li>
+  </ol>
+
+  <div class="part-label">Part 1 · gitops-agent update</div>
+  <ol>
+    <li><a href="#ch-3"><span class="ch-no">3</span> Ask GitHub for a release</a></li>
+    <li><a href="#ch-4"><span class="ch-no">4</span> Download and verify</a></li>
+    <li><a href="#ch-5"><span class="ch-no">5</span> Install, restart, attest</a></li>
+    <li><a href="#ch-6"><span class="ch-no">6</span> Wire the subcommand</a></li>
+  </ol>
+
+  <div class="part-label">Part 2 · gitops-agent install</div>
+  <ol>
+    <li><a href="#ch-7"><span class="ch-no">7</span> Embed the assets</a></li>
+    <li><a href="#ch-8"><span class="ch-no">8</span> The idempotent installer</a></li>
+    <li><a href="#ch-9"><span class="ch-no">9</span> Flags, users, wiring</a></li>
+  </ol>
+
+  <div class="part-label">Part 3 · The boundary</div>
+  <ol>
+    <li><a href="#ch-10"><span class="ch-no">10</span> The bootstrap script</a></li>
+    <li><a href="#ch-11"><span class="ch-no">11</span> Write it down</a></li>
+  </ol>
+
+  <div class="part-label">Appendix</div>
+  <ol>
+    <li><a href="#appendix"><span class="ch-no">A</span> Reference map &amp; shelf</a></li>
+  </ol>
+</nav>
+
+<main>
+<div class="page">
+
+<header class="hero">
+  <div class="eyebrow">gitops-agent · Go curriculum</div>
+  <h1>Rebuilding gitops-agent</h1>
+  <p class="lede">Twelve chapters of hands-on Go, taught by your own homelab. You will rebuild the agent's CLI features — self-update, installer, bootstrap — from specs, with the original implementation held back as an answer key until you're done.</p>
+</header>
+
+<!-- ================= COURSE MAP ================= -->
+<div class="map-part">
+  <div class="part-title">Part 0 · Orientation — read, don't write</div>
+  <ol>
+    <li><span class="ch-no">0</span> How this course works <span class="est">~30 min</span></li>
+    <li><span class="ch-no">1</span> The machine you're changing <span class="est">~1 h</span></li>
+    <li><span class="ch-no">2</span> Guided read: the dispatch seam <span class="est">~45 min</span></li>
+  </ol>
+</div>
+<div class="map-part">
+  <div class="part-title">Part 1 · <code>gitops-agent update</code> — build internal/selfupdate</div>
+  <ol>
+    <li><span class="ch-no">3</span> Ask GitHub for the latest release <span class="est">1–2 h · PR</span></li>
+    <li><span class="ch-no">4</span> Download and verify <span class="est">1–2 h · PR</span></li>
+    <li><span class="ch-no">5</span> Install atomically, restart, attest <span class="est">1–2 h · PR</span></li>
+    <li><span class="ch-no">6</span> Wire the subcommand <span class="est">~1 h · PR</span></li>
+  </ol>
+</div>
+<div class="map-part">
+  <div class="part-title">Part 2 · <code>gitops-agent install</code> — build internal/installer</div>
+  <ol>
+    <li><span class="ch-no">7</span> Embed the assets <span class="est">1–2 h · PR</span></li>
+    <li><span class="ch-no">8</span> The idempotent installer <span class="est">1.5–2 h · PR</span></li>
+    <li><span class="ch-no">9</span> Flags, users, and wiring <span class="est">~1 h · PR</span></li>
+  </ol>
+</div>
+<div class="map-part">
+  <div class="part-title">Part 3 · The boundary — bash, shims, and prose</div>
+  <ol>
+    <li><span class="ch-no">10</span> The bootstrap script and the shim <span class="est">1–2 h · PR</span></li>
+    <li><span class="ch-no">11</span> Write it down <span class="est">~1 h · PR</span></li>
+  </ol>
+</div>
+
+<!-- ================= CHAPTER 0 ================= -->
+<section class="chapter" id="ch-0" data-chapter="0">
+  <div class="ch-head">
+    <div class="eyebrow">Part 0 · Orientation</div>
+    <h2><span class="ch-num">0</span>How this course works</h2>
+  </div>
+  <div class="ch-meta">
+    <span class="badge">~30 min</span>
+    <span class="badge read-only">setup, nothing merged</span>
+  </div>
+
+  <p>This curriculum was carved out of real work: a stack of five pull requests (#7–#11) that moved gitops-agent's install and update machinery out of bash and into the binary. Those PRs are now <em>closed</em>, and their branches live on as <code>reference/*</code> — the answer key. Your job is to produce the same functionality yourself, chapter by chapter, and only then compare.</p>
+
+  <h3>The contract</h3>
+  <ul>
+    <li><strong>You type the code.</strong> All of it. The point of this course is the hours your fingers spend in Go, not the diff at the end.</li>
+    <li><strong>Claude is your tutor, not your ghostwriter.</strong> Two skills live alongside this document: <code>tutor</code> (Socratic help — escalating hints, never code) and <code>grade</code> (invoke when you believe a chapter is done; it runs the quality gates, reviews your diff on its merits, then compares against the reference).</li>
+    <li><strong>Don't peek at <code>reference/*</code></strong> until <code>grade</code> shows it to you, or you explicitly surrender a chapter. The bash scripts already on <code>main</code> are your spec for Part 1 — that's not peeking, that's reading requirements.</li>
+    <li><strong>Every assignment ends green.</strong> <code>gofmt -l .</code>, <code>go vet ./...</code>, <code>go test ./...</code> — clean, before every commit. CI enforces all three, so CI is your grader of first resort.</li>
+  </ul>
+
+  <h3>The loop, per chapter</h3>
+  <ol>
+    <li>Read the chapter. Follow the reading links you don't already know cold.</li>
+    <li>Branch from <code>main</code>: <code>git checkout -b feat/ch03-latest-release main</code> (use the branch name the chapter gives you).</li>
+    <li>Build the assignment. Ask the <code>tutor</code> when stuck — it will make you earn it.</li>
+    <li>Run the gates locally. Commit with a conventional-commit message (<code>feat:</code>, <code>test:</code> …) that explains <em>why</em> in the body.</li>
+    <li>Push, open a PR to <code>main</code>, let CI run.</li>
+    <li>Invoke <code>grade</code>. Fix what it finds. Merge when it passes and you're satisfied.</li>
+  </ol>
+
+  <h3>One-time setup</h3>
+  <p>This curriculum and the two skills live on the branch <code>claude/go-gitops-agent-curriculum-6v7ymk</code>, which deliberately never merges to <code>main</code> — so your assignment branches won't contain them. Overlay them as untracked files once, and they'll follow you across every branch without ever landing in a PR:</p>
+  <pre><code># from your clone, on any branch:
+git checkout claude/go-gitops-agent-curriculum-6v7ymk -- .claude docs/curriculum
+git restore --staged .claude docs/curriculum
+
+# keep them out of git status and out of your PRs:
+printf '.claude/\ndocs/curriculum/\n' &gt;&gt; .git/info/exclude</code></pre>
+  <p><code>.git/info/exclude</code> is a local-only ignore file — like <code>.gitignore</code>, but never committed. If a chapter's files ever look stale, re-run the first command to refresh them from the branch.</p>
+
+  <p>Then verify the toolchain:</p>
+  <pre><code>go version          # anything ≥ the version in go.mod is fine
+go test ./...       # should pass on a fresh clone
+gofmt -l .          # should print nothing
+go vet ./...        # should print nothing
+shellcheck --version  # needed for chapter 10</code></pre>
+
+  <div class="callout">
+    <span class="label">Tracking progress</span>
+    <p>The checkboxes at the end of each chapter are stored in your browser only. If you use beads (<code>bd</code>) in this repo, the tutor can also file an issue per chapter and close it when graded — say so and it will.</p>
+  </div>
+
+  <label class="ch-done"><input type="checkbox" data-done="0"> Mark chapter 0 done</label>
+</section>
+
+<!-- ================= CHAPTER 1 ================= -->
+<section class="chapter" id="ch-1" data-chapter="1">
+  <div class="ch-head">
+    <div class="eyebrow">Part 0 · Orientation</div>
+    <h2><span class="ch-num">1</span>The machine you're changing</h2>
+  </div>
+  <div class="ch-meta">
+    <span class="badge">~1 h</span>
+    <span class="badge read-only">read &amp; explore, no PR</span>
+  </div>
+
+  <p>gitops-agent is one Go module with one job: a daemon that keeps docker compose services on a host matching what a git repository says they should be. The repo it syncs is the desired state <em>and</em> the trust boundary — anyone who can push to it can run containers on the host. Every design decision you'll meet in this course bends around that fact.</p>
+
+  <p>The layout is the standard shape for a small Go service, and it's worth internalizing because Part 1 and 2 add packages to it:</p>
+
+  <pre><code>cmd/gitops-agent/   package main — flag parsing, signal handling, the reconcile loop
+internal/
+  config/           config.toml + services.toml parsing (TOML → structs)
+  gitsync/          fetch + hard reset; tree-hash change detection
+  sopsdecrypt/      decrypt secrets.enc.env → tmpfs, never the checkout
+  deploy/           docker compose up / down
+  schedule/         adaptive polling cadence (idle 300 s ↔ active 15 s)
+  state/            persisted map of what's deployed, as JSON
+  statusserver/     HTTP status page + snapshot file
+docs/               operator docs — how-it-works.md is the loop in prose
+systemd/            the units a host runs; update.bash (your Part 1 spec)
+scripts/lib/        github-release.bash (spec for the verify logic)</code></pre>
+
+  <p><code>internal/</code> is not a convention, it's a compiler-enforced rule: packages under it can only be imported from within this module. That's why the agent can keep these packages' APIs blunt and change them freely — nobody outside can depend on them.</p>
+
+  <figure>
+    <svg viewBox="0 0 760 320" role="img" aria-label="The reconcile cycle: sync, reload manifest, tear down, decide, then decrypt, deploy, persist, and a wait chosen by the scheduler loops back to sync.">
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+        </marker>
+      </defs>
+      <g fill="none" stroke="currentColor" stroke-width="1.3">
+        <rect x="20"  y="40" width="150" height="56" rx="8"/>
+        <rect x="210" y="40" width="150" height="56" rx="8"/>
+        <rect x="400" y="40" width="150" height="56" rx="8"/>
+        <rect x="590" y="40" width="150" height="56" rx="8"/>
+        <rect x="590" y="180" width="150" height="56" rx="8"/>
+        <rect x="400" y="180" width="150" height="56" rx="8"/>
+        <rect x="210" y="180" width="150" height="56" rx="8"/>
+      </g>
+      <g fill="currentColor" font-size="13" text-anchor="middle">
+        <text x="95"  y="63">1 · sync</text>
+        <text x="285" y="63">2 · reload manifest</text>
+        <text x="475" y="63">3 · tear down</text>
+        <text x="665" y="63">4 · decide</text>
+        <text x="665" y="203">5 · decrypt</text>
+        <text x="475" y="203">6 · deploy</text>
+        <text x="285" y="203">7 · persist</text>
+      </g>
+      <g fill="currentColor" font-size="10.5" text-anchor="middle" opacity="0.65" class="m">
+        <text x="95"  y="82" class="m">gitsync</text>
+        <text x="285" y="82" class="m">config</text>
+        <text x="475" y="82" class="m">deploy.Down</text>
+        <text x="665" y="82" class="m">gitsync.PathChanged</text>
+        <text x="665" y="222" class="m">sopsdecrypt</text>
+        <text x="475" y="222" class="m">deploy</text>
+        <text x="285" y="222" class="m">state + statusserver</text>
+      </g>
+      <g stroke="currentColor" stroke-width="1.3" fill="none">
+        <line x1="170" y1="68" x2="204" y2="68" marker-end="url(#arr)"/>
+        <line x1="360" y1="68" x2="394" y2="68" marker-end="url(#arr)"/>
+        <line x1="550" y1="68" x2="584" y2="68" marker-end="url(#arr)"/>
+        <line x1="665" y1="96" x2="665" y2="174" marker-end="url(#arr)"/>
+        <line x1="590" y1="208" x2="556" y2="208" marker-end="url(#arr)"/>
+        <line x1="400" y1="208" x2="366" y2="208" marker-end="url(#arr)"/>
+      </g>
+      <g stroke="currentColor" stroke-width="1.3" fill="none" stroke-dasharray="5 4">
+        <path d="M 210 208 L 95 208 L 95 102" marker-end="url(#arr)"/>
+      </g>
+      <text x="150" y="258" fill="currentColor" font-size="11.5" opacity="0.8">wait — schedule: 15 s for 15 min after a commit,</text>
+      <text x="150" y="274" fill="currentColor" font-size="11.5" opacity="0.8">else ~300 s ± jitter; SIGHUP skips the wait</text>
+      <text x="150" y="296" fill="currentColor" font-size="10.5" opacity="0.65" class="m">schedule</text>
+    </svg>
+    <figcaption>One reconcile cycle, with the internal package that owns each step. A broken step logs and continues; only the wait decides how soon the next cycle starts.</figcaption>
+  </figure>
+
+  <h3>Read</h3>
+  <ul class="reading">
+    <li><a href="../how-it-works.md">docs/how-it-works.md</a> — <span class="why">the loop above, in prose, with the reasoning (hard reset over pull, last-known-good manifest, full reconcile for drift).</span></li>
+    <li><code>cmd/gitops-agent/main.go</code> — <span class="why">read <code>run()</code> and <code>runOnce()</code> top to bottom with how-it-works.md beside it. This is the best 300 lines of orientation in the repo.</span></li>
+    <li><a href="https://go.dev/doc/modules/layout">go.dev — Organizing a Go module</a> — <span class="why">why <code>cmd/</code> and <code>internal/</code> look like this.</span></li>
+    <li><a href="https://go.dev/tour/list">A Tour of Go</a> — <span class="why">skim as a refresher if it's been a while; you want structs, methods, slices/maps, and error basics warm before chapter 3. Deeper: <a href="https://go.dev/doc/effective_go">Effective Go</a>.</span></li>
+  </ul>
+
+  <div class="assignment">
+    <div class="label">Assignment 1 — field questions</div>
+    <p>No code, no PR. Explore until you can answer these from the source (not the docs). Write your answers down — one sentence each — and check them with the tutor if you're unsure:</p>
+    <ol>
+      <li>A commit lands that only touches <code>services/blog/</code>. Which services get <code>docker compose up</code> on the next cycle, and which function decided that?</li>
+      <li>You push a <code>services.toml</code> with a syntax error. What happens to the currently running services, and which log line proves it?</li>
+      <li>Why does teardown run <em>before</em> deploy in the same cycle? What breaks if you swap them?</li>
+      <li>Where do decrypted secrets land on disk, and why there of all places?</li>
+      <li><code>runOnce</code> returns <code>(bool, error)</code>. Who consumes the bool, and what behavior does it drive?</li>
+      <li>What happens to the loop when you <code>systemctl restart</code> the agent mid-deploy — and which lines in <code>main()</code> make that true?</li>
+    </ol>
+    <h4>Done when</h4>
+    <ul>
+      <li>You can sketch the cycle figure above from memory.</li>
+      <li>All six answers are written down and survive a tutor spot-check.</li>
+    </ul>
+  </div>
+
+  <label class="ch-done"><input type="checkbox" data-done="1"> Mark chapter 1 done</label>
+</section>
+
+<!-- ================= CHAPTER 2 ================= -->
+<section class="chapter" id="ch-2" data-chapter="2">
+  <div class="ch-head">
+    <div class="eyebrow">Part 0 · Orientation</div>
+    <h2><span class="ch-num">2</span>Guided read: the dispatch seam</h2>
+  </div>
+  <div class="ch-meta">
+    <span class="badge">~45 min</span>
+    <span class="badge read-only">scratch branch, no PR</span>
+  </div>
+
+  <p>Everything you build in Parts 1 and 2 hangs off one commit that is already on <code>main</code>: <code>63f31e8</code>, which taught <code>cmd/gitops-agent</code> to dispatch subcommands. It's 140 lines including tests, and it's your model for what a finished assignment in this course looks like — small, motivated by a constraint, and tested at the seam.</p>
+
+  <pre><code>git show 63f31e8   # read the commit message first, then the diff</code></pre>
+
+  <p>The constraint that shaped it: <code>gitops-agent.service</code> and existing tooling invoke the binary bare, or with flags (<code>-version</code>, <code>-config</code>). That invocation shape is load-bearing and must keep meaning "run the daemon". So dispatch triggers only when <code>os.Args[1]</code> exists and doesn't start with <code>-</code>:</p>
+
+  <figure>
+    <svg viewBox="0 0 720 240" role="img" aria-label="Decision flow: no args or a leading dash runs the daemon; a bare word is looked up in the subcommands map; a hit runs that function, a miss prints usage and exits 1.">
+      <defs>
+        <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+        </marker>
+      </defs>
+      <g fill="none" stroke="currentColor" stroke-width="1.3">
+        <rect x="20" y="90" width="160" height="52" rx="8"/>
+        <rect x="255" y="90" width="170" height="52" rx="8"/>
+        <rect x="510" y="20" width="190" height="52" rx="8"/>
+        <rect x="510" y="100" width="190" height="52" rx="8"/>
+        <rect x="510" y="180" width="190" height="52" rx="8"/>
+      </g>
+      <g fill="currentColor" font-size="13" text-anchor="middle">
+        <text x="100" y="112" class="m" font-size="12.5">os.Args[1:]</text>
+        <text x="100" y="130" font-size="11.5" opacity="0.75">what did we get?</text>
+        <text x="340" y="112" class="m" font-size="12.5">subcommands[name]</text>
+        <text x="340" y="130" font-size="11.5" opacity="0.75">map lookup</text>
+        <text x="605" y="41" font-size="12.5">run the daemon</text>
+        <text x="605" y="59" font-size="11" opacity="0.75" class="m">flag.Parse() → run()</text>
+        <text x="605" y="121" font-size="12.5">run the subcommand</text>
+        <text x="605" y="139" font-size="11" opacity="0.75" class="m">cmd(args) → exit code</text>
+        <text x="605" y="201" font-size="12.5">usage to stderr</text>
+        <text x="605" y="219" font-size="11" opacity="0.75" class="m">exit 1</text>
+      </g>
+      <g stroke="currentColor" stroke-width="1.3" fill="none">
+        <path d="M 180 106 L 504 46" marker-end="url(#arr2)"/>
+        <line x1="180" y1="122" x2="249" y2="118" marker-end="url(#arr2)"/>
+        <line x1="425" y1="112" x2="504" y2="122" marker-end="url(#arr2)"/>
+        <path d="M 425 126 L 504 200" marker-end="url(#arr2)"/>
+      </g>
+      <g fill="currentColor" font-size="11">
+        <text x="215" y="62" transform="rotate(-10 215 62)">empty, or starts with “-”</text>
+        <text x="192" y="140">bare word</text>
+        <text x="440" y="105">found</text>
+        <text x="437" y="176" transform="rotate(24 437 176)">not found</text>
+      </g>
+    </svg>
+    <figcaption>The dispatch seam in <code>main()</code>. The daemon path is untouched; subcommands are a map that later chapters add entries to.</figcaption>
+  </figure>
+
+  <h3>What to notice while reading</h3>
+  <ul>
+    <li><strong>The registry is a map of functions.</strong> <code>map[string]func(args []string) error</code> — functions are values in Go; storing them in a map is the whole "framework". Each subcommand file registers itself in <code>init()</code>, so adding a subcommand never edits <code>main.go</code> again.</li>
+    <li><strong><code>dispatch</code> takes <code>stderr io.Writer</code>, not <code>os.Stderr</code>.</strong> That one parameter is why <code>dispatch_test.go</code> can assert on error output with a <code>bytes.Buffer</code>. Injecting the seam you want to observe is the testing move this whole course keeps making.</li>
+    <li><strong>The tests are table-driven.</strong> <code>TestIsSubcommand</code> is the canonical Go pattern: a slice of cases, one <code>t.Run</code> per case. You'll write a lot of these.</li>
+    <li><strong>Errors cross the boundary as values.</strong> Subcommands return <code>error</code>; only <code>dispatch</code> decides what that means for the process (message + exit code). Policy at the edge, plumbing in the middle.</li>
+  </ul>
+
+  <h3>Read</h3>
+  <ul class="reading">
+    <li><a href="https://gobyexample.com/command-line-subcommands">Go by Example — command-line subcommands</a> — <span class="why">the standard-library way; compare it with what this repo chose and ask why.</span></li>
+    <li><a href="https://go.dev/wiki/TableDrivenTests">Go wiki — table-driven tests</a> — <span class="why">the test shape you just read, explained.</span></li>
+    <li><a href="https://pkg.go.dev/io#Writer">pkg.go.dev — io.Writer</a> — <span class="why">the single most load-bearing interface in Go; one method, endless test seams.</span></li>
+    <li><a href="https://go.dev/doc/effective_go#init">Effective Go — init</a> — <span class="why">what <code>init()</code> is and when it runs. Registration is its one broadly accepted use; don't reach for it beyond that.</span></li>
+  </ul>
+
+  <div class="assignment">
+    <div class="label">Assignment 2 — a throwaway subcommand</div>
+    <p>On a scratch branch (<code>git checkout -b scratch/ch02-dispatch main</code> — it will never become a PR), prove you understand the seam by using it:</p>
+    <ol>
+      <li>Add a <code>cmd/gitops-agent/hello.go</code> that registers a <code>hello</code> subcommand in <code>init()</code>. It errors if given arguments, otherwise prints <code>hello from gitops-agent</code>.</li>
+      <li>Write <code>hello_test.go</code>: one test that it rejects arguments, one that dispatching <code>hello</code> through <code>dispatch()</code> returns exit code 0.</li>
+      <li>Build and run all four invocation shapes: bare (ctrl-C it), <code>-version</code>, <code>hello</code>, <code>bogus</code>. Confirm each behaves as the figure predicts.</li>
+      <li>Delete the branch. The knowledge is the artifact.</li>
+    </ol>
+    <h4>Done when</h4>
+    <ul>
+      <li>All four invocation shapes behaved as you predicted <em>before</em> you ran them.</li>
+      <li>You can explain why <code>usage()</code> lists subcommand names sorted (hint: iterate a Go map twice and watch the order).</li>
+    </ul>
+  </div>
+
+  <label class="ch-done"><input type="checkbox" data-done="2"> Mark chapter 2 done</label>
+</section>
+
+<!-- ================= CHAPTER 3 ================= -->
+<section class="chapter" id="ch-3" data-chapter="3">
+  <div class="ch-head">
+    <div class="eyebrow">Part 1 · gitops-agent update</div>
+    <h2><span class="ch-num">3</span>Ask GitHub for the latest release</h2>
+  </div>
+  <div class="ch-meta">
+    <span class="badge">1–2 h</span>
+    <span class="badge deliver">PR · feat/ch03-latest-release</span>
+  </div>
+
+  <p><strong>The mission for Part 1:</strong> the daily self-update currently lives in <code>systemd/update.bash</code> plus <code>scripts/lib/github-release.bash</code>. Over the next four chapters you will port it into the binary as <code>internal/selfupdate</code>, wired up as <code>gitops-agent update</code>. Those two bash scripts are your functional spec — read them the way you'd read a requirements doc. Same steps, same verification, same leave-the-installed-binary-alone-on-any-failure guarantee.</p>
+
+  <p>This chapter builds the first slice: a new package that can answer one question — <em>what is the latest released version?</em> — against the GitHub API, with a test suite that never touches the network.</p>
+
+  <h3>Concepts</h3>
+  <ul>
+    <li><strong>A config struct instead of a parameter list.</strong> Start a <code>Config</code> struct now (<code>Repo</code>, <code>Token</code>, and the two test seams below) and grow it through Part 1. In Go, a struct of plain fields with documented zero-value behavior ("empty means the real GitHub") is the idiomatic alternative to both global state and six-argument functions.</li>
+    <li><strong>Decode only what you need.</strong> The releases API returns a huge JSON object; you need one field. Define a struct with just <code>TagName string</code> and a <code>json:"tag_name"</code> struct tag — <code>encoding/json</code> ignores the rest. This is normal and good.</li>
+    <li><strong>The request/response ritual.</strong> <code>http.NewRequest</code> → set headers (<code>Accept: application/vnd.github+json</code>; <code>Authorization: Bearer …</code> only when a token is set) → <code>client.Do(req)</code> → <code>defer resp.Body.Close()</code> → check <code>resp.StatusCode</code> → decode. Every step someone skips becomes a production bug; the body-close and status-check are the two everyone skips first.</li>
+    <li><strong>Wrap errors on the way up.</strong> <code>fmt.Errorf("querying latest release: %w", err)</code> — the <code>%w</code> verb keeps the cause inspectable with <code>errors.Is</code>/<code>errors.As</code> while the prefix tells a log reader <em>which</em> HTTP call died.</li>
+  </ul>
+
+  <figure>
+    <svg viewBox="0 0 720 250" role="img" aria-label="The same latestReleaseTag code path talks to api.github.com in production, or to a local httptest server in tests, chosen by two Config fields.">
+      <defs>
+        <marker id="arr3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+        </marker>
+      </defs>
+      <g fill="none" stroke="currentColor" stroke-width="1.3">
+        <rect x="20" y="85" width="200" height="80" rx="8"/>
+        <rect x="470" y="20" width="230" height="76" rx="8"/>
+        <rect x="470" y="150" width="230" height="76" rx="8" stroke-dasharray="5 4"/>
+      </g>
+      <g fill="currentColor" font-size="13" text-anchor="middle">
+        <text x="120" y="112" class="m" font-size="12.5">latestReleaseTag(cfg)</text>
+        <text x="120" y="132" font-size="11.5" opacity="0.75">one code path,</text>
+        <text x="120" y="148" font-size="11.5" opacity="0.75">no test hooks inside</text>
+        <text x="585" y="48">production</text>
+        <text x="585" y="68" class="m" font-size="11.5">https://api.github.com</text>
+        <text x="585" y="84" font-size="11" opacity="0.75">zero-value Config</text>
+        <text x="585" y="178">tests</text>
+        <text x="585" y="198" class="m" font-size="11.5">httptest.NewServer(mux)</text>
+        <text x="585" y="214" font-size="11" opacity="0.75">cfg.APIBaseURL = srv.URL</text>
+      </g>
+      <g stroke="currentColor" stroke-width="1.3" fill="none">
+        <path d="M 220 110 L 464 62" marker-end="url(#arr3)"/>
+        <path d="M 220 140 L 464 184" marker-end="url(#arr3)" stroke-dasharray="5 4"/>
+      </g>
+      <g fill="currentColor" font-size="11">
+        <text x="290" y="72" transform="rotate(-11 290 72)">GET /repos/&lt;repo&gt;/releases/latest</text>
+        <text x="300" y="182" transform="rotate(10 300 182)">same request, local socket</text>
+      </g>
+    </svg>
+    <figcaption>The seam is data, not mocks: <code>Config.APIBaseURL</code> and <code>Config.HTTPClient</code> default to the real GitHub when zero, and tests point them at an in-process <code>httptest.Server</code>.</figcaption>
+  </figure>
+
+  <h3>Read</h3>
+  <ul class="reading">
+    <li><code>systemd/update.bash</code> (on <code>main</code>) — <span class="why">the "resolve the latest tag" block is this chapter's spec, including the empty-tag failure case.</span></li>
+    <li><a href="https://go.dev/blog/json">Go blog — JSON and Go</a> — <span class="why">how <code>encoding/json</code> maps JSON to structs; why partial structs work.</span></li>
+    <li><a href="https://go.dev/blog/go1.13-errors">Go blog — Working with Errors in Go 1.13</a> — <span class="why">the <code>%w</code>/<code>errors.Is</code> model you'll use in every package from now on.</span></li>
+    <li><a href="https://pkg.go.dev/net/http/httptest#NewServer">pkg.go.dev — httptest.NewServer</a> — <span class="why">a real HTTP server on a random local port, per test. Also skim <a href="https://pkg.go.dev/net/http#ServeMux">http.ServeMux</a> for routing your fake.</span></li>
+    <li><a href="https://gobyexample.com/http-client">Go by Example — HTTP client</a> — <span class="why">the minimal ritual, if you want it in one screen first.</span></li>
+  </ul>
+
+  <div class="assignment">
+    <div class="label">Assignment 3 — internal/selfupdate, first slice</div>
+    <p>Branch <code>feat/ch03-latest-release</code> from <code>main</code>. Create <code>internal/selfupdate/selfupdate.go</code> and its test file. Build:</p>
+    <ol>
+      <li>A <code>Config</code> struct: <code>Repo</code> ("owner/repo"), <code>Token</code>, plus test seams <code>APIBaseURL</code> and <code>HTTPClient *http.Client</code> — each falling back to the real default when zero. Document the zero-value meaning on each field.</li>
+      <li><code>latestReleaseTag(cfg Config) (string, error)</code> hitting <code>GET {api}/repos/{repo}/releases/latest</code>, decoding only <code>tag_name</code>.</li>
+      <li>A package doc comment saying what the package will become (a port of update.bash — say so; future-you reads this).</li>
+    </ol>
+    <h4>Acceptance criteria</h4>
+    <ul>
+      <li>Happy path returns the tag; a test proves it against an <code>httptest.Server</code> serving a GitHub-shaped JSON body.</li>
+      <li>Non-200 responses and an empty/missing <code>tag_name</code> both return errors that name the URL or repo — tested.</li>
+      <li>When <code>Token</code> is set, the request carries <code>Authorization: Bearer &lt;token&gt;</code>; when unset, no auth header. Test it by asserting on <code>r.Header</code> inside your fake handler.</li>
+      <li>Every response body gets closed; no test opens a real network connection.</li>
+      <li>Gates green: <code>gofmt -l .</code> silent, <code>go vet ./...</code>, <code>go test ./...</code>.</li>
+    </ul>
+    <h4>Done when</h4>
+    <ul>
+      <li>PR open against <code>main</code>, CI green, <code>grade</code> passed.</li>
+    </ul>
+  </div>
+
+  <details class="nudge">
+    <summary>Nudge (open only if stuck)</summary>
+    <p>Write the fake server first. A <code>http.HandlerFunc</code> that does <code>fmt.Fprintf(w, `{"tag_name": %q}`, "v1.2.0")</code> is a complete GitHub for this chapter's purposes — and once it exists, the shape of the code under test falls out of what the test needs to inject.</p>
+  </details>
+
+  <label class="ch-done"><input type="checkbox" data-done="3"> Mark chapter 3 done</label>
+</section>
+
+<!-- ================= CHAPTER 4 ================= -->
+<section class="chapter" id="ch-4" data-chapter="4">
+  <div class="ch-head">
+    <div class="eyebrow">Part 1 · gitops-agent update</div>
+    <h2><span class="ch-num">4</span>Download and verify</h2>
+  </div>
+  <div class="ch-meta">
+    <span class="badge">1–2 h</span>
+    <span class="badge deliver">PR · feat/ch04-fetch-verified</span>
+  </div>
+
+  <p>Now the security-critical middle: download a release asset to a temporary file and verify its SHA-256 checksum against the <code>.sha256</code> file published beside it. The contract, straight from <code>github_release_fetch_verified</code> in the bash spec: <em>on any failure, the temp file is removed and an error is returned</em>. A caller must never be able to install an unverified binary just because it forgot to check something.</p>
+
+  <h3>Concepts</h3>
+  <ul>
+    <li><strong>Stream, don't slurp.</strong> The binary goes <code>resp.Body → io.Copy → file</code>, never through a <code>[]byte</code> in memory — this runs on small boxes. The checksum file, a few dozen bytes, can be slurped with <code>io.ReadAll</code>. Choosing per payload is the skill.</li>
+    <li><strong><code>os.CreateTemp</code> and the cleanup discipline.</strong> Every early return between "temp file created" and "verified" must remove it. A named <code>cleanup := func() { os.Remove(path) }</code> called at each failure exit is one honest way; think about why a plain <code>defer</code> is wrong here (the success path must <em>keep</em> the file — though chapter 5 shows the <code>defer</code>-that-becomes-a-no-op trick).</li>
+    <li><strong>Hash a file without reading it twice.</strong> <code>sha256.New()</code> is an <code>io.Writer</code> — <code>io.Copy(hasher, file)</code> then <code>hex.EncodeToString(h.Sum(nil))</code>. The standard library composes around <code>io.Reader</code>/<code>io.Writer</code>; when two stdlib types won't connect, you're probably holding one wrong.</li>
+    <li><strong>Parse defensively.</strong> The published <code>.sha256</code> file is <code>&lt;hash&gt;␠␠&lt;filename&gt;</code>, and the filename never matches your temp path — so extract the hash column (<code>strings.Fields</code>) and compare, rather than shelling out to <code>sha256sum -c</code>. The bash spec has a comment making exactly this argument; port the comment's reasoning, not just the code.</li>
+  </ul>
+
+  <figure>
+    <svg viewBox="0 0 740 260" role="img" aria-label="Pipeline: download asset to temp file, download checksum, compare hashes; each stage's failure path removes the temp file and returns an error; only success hands the verified path to the caller.">
+      <defs>
+        <marker id="arr4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+        </marker>
+      </defs>
+      <g fill="none" stroke="currentColor" stroke-width="1.3">
+        <rect x="20"  y="30" width="150" height="56" rx="8"/>
+        <rect x="215" y="30" width="150" height="56" rx="8"/>
+        <rect x="410" y="30" width="150" height="56" rx="8"/>
+        <rect x="605" y="30" width="115" height="56" rx="8" stroke-width="2"/>
+      </g>
+      <rect x="215" y="180" width="345" height="52" rx="8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4"/>
+      <g fill="currentColor" font-size="12.5" text-anchor="middle">
+        <text x="95"  y="53">download asset</text>
+        <text x="95"  y="71" class="m" font-size="10.5" opacity="0.7">os.CreateTemp + io.Copy</text>
+        <text x="290" y="53">fetch .sha256</text>
+        <text x="290" y="71" class="m" font-size="10.5" opacity="0.7">io.ReadAll + Fields</text>
+        <text x="485" y="53">hash &amp; compare</text>
+        <text x="485" y="71" class="m" font-size="10.5" opacity="0.7">sha256 + io.Copy</text>
+        <text x="662" y="53">verified path</text>
+        <text x="662" y="71" font-size="10.5" opacity="0.7">→ caller</text>
+        <text x="387" y="201" font-size="12.5">any failure: remove temp file, return error</text>
+        <text x="387" y="219" class="m" font-size="10.5" opacity="0.7">nothing verifiable ⇒ nothing on disk</text>
+      </g>
+      <g stroke="currentColor" stroke-width="1.3" fill="none">
+        <line x1="170" y1="58" x2="209" y2="58" marker-end="url(#arr4)"/>
+        <line x1="365" y1="58" x2="404" y2="58" marker-end="url(#arr4)"/>
+        <line x1="560" y1="58" x2="599" y2="58" marker-end="url(#arr4)"/>
+      </g>
+      <g stroke="currentColor" stroke-width="1.2" fill="none" stroke-dasharray="4 4">
+        <line x1="95"  y1="86" x2="240" y2="176" marker-end="url(#arr4)"/>
+        <line x1="290" y1="86" x2="330" y2="176" marker-end="url(#arr4)"/>
+        <line x1="485" y1="86" x2="450" y2="176" marker-end="url(#arr4)"/>
+      </g>
+    </svg>
+    <figcaption>Every stage funnels failure into the same guarantee. The dashed box is the contract, not an afterthought — your tests will assert the temp file is gone.</figcaption>
+  </figure>
+
+  <h3>Read</h3>
+  <ul class="reading">
+    <li><code>scripts/lib/github-release.bash</code> (on <code>main</code>) — <span class="why">this chapter's spec: <code>github_release_fetch_verified</code>, including the token path and the checksum-parsing comment.</span></li>
+    <li><a href="https://pkg.go.dev/io#Copy">pkg.go.dev — io.Copy</a> and <a href="https://pkg.go.dev/os#CreateTemp">os.CreateTemp</a> — <span class="why">the two workhorses; read CreateTemp's pattern argument docs, you'll want a recognizable prefix.</span></li>
+    <li><a href="https://pkg.go.dev/crypto/sha256">pkg.go.dev — crypto/sha256</a> — <span class="why">note <code>New()</code> returning a <code>hash.Hash</code>, which is an <code>io.Writer</code>.</span></li>
+    <li><a href="https://go.dev/blog/defer-panic-and-recover">Go blog — Defer, Panic, and Recover</a> — <span class="why">defer's evaluation rules; you need them to reason about the cleanup question above.</span></li>
+  </ul>
+
+  <div class="assignment">
+    <div class="label">Assignment 4 — fetchVerified</div>
+    <p>Branch <code>feat/ch04-fetch-verified</code> from <code>main</code> (merge chapter 3's PR first). Extend <code>internal/selfupdate</code>:</p>
+    <ol>
+      <li>Grow <code>Config</code> with <code>AssetName</code> and <code>DownloadBaseURL</code> (test seam, defaulting to <code>https://github.com</code>).</li>
+      <li><code>fetchVerified(cfg Config, tag, destDir string) (string, error)</code>: download <code>{download}/{repo}/releases/download/{tag}/{asset}</code> into a temp file in <code>destDir</code>, fetch the sibling <code>.sha256</code>, extract the expected hash, hash the temp file, compare. Return the temp path only on success.</li>
+      <li>Helpers as you see fit — a shared "GET with headers, non-200 is an error" helper will earn its keep; so will separate download-to-file and download-to-memory functions.</li>
+    </ol>
+    <h4>Acceptance criteria</h4>
+    <ul>
+      <li>Happy path: returns a path whose contents equal what the fake server served — tested with your chapter 3 fake grown to serve download URLs.</li>
+      <li>Checksum mismatch: error mentioning both hashes, <em>and</em> the test walks <code>destDir</code> to prove no temp file survived.</li>
+      <li>Missing asset or missing <code>.sha256</code>: errors that say what's missing and that nothing was installed; the missing-checksum error should refuse loudly ("refusing to install an unverified binary" is the spec's wording — keep that spirit).</li>
+      <li>Unparseable checksum file: error, no leftover file.</li>
+      <li>Errors are wrapped with context at every level; gates green.</li>
+    </ul>
+    <h4>Stretch (optional)</h4>
+    <ul>
+      <li>The token path: against a private repo the plain download URL 404s, so the bash spec resolves numeric asset IDs via the API and downloads those with <code>Accept: application/octet-stream</code>. Port it if you're feeling it — the reference has it, and <code>grade</code> will treat it as a difference, not a defect, if you skip it.</li>
+    </ul>
+  </div>
+
+  <details class="nudge">
+    <summary>Nudge (open only if stuck)</summary>
+    <p>Test-order trick: write <code>TestFetchVerified_ChecksumMismatch</code> <em>before</em> the happy path. The failure test forces the cleanup structure into existence early; retrofitting cleanup after the happy path works is how leftover-file bugs get written.</p>
+  </details>
+
+  <label class="ch-done"><input type="checkbox" data-done="4"> Mark chapter 4 done</label>
+</section>
+
+<!-- ================= CHAPTER 5 ================= -->
+<section class="chapter" id="ch-5" data-chapter="5">
+  <div class="ch-head">
+    <div class="eyebrow">Part 1 · gitops-agent update</div>
+    <h2><span class="ch-num">5</span>Install atomically, restart, attest</h2>
+  </div>
+  <div class="ch-meta">
+    <span class="badge">1–2 h</span>
+    <span class="badge deliver">PR · feat/ch05-update-orchestration</span>
+  </div>
+
+  <p>This chapter completes the package: the top-level <code>Update(cfg)</code> that decides whether an update is needed, and the three effects it orchestrates — install the verified file over the running binary, restart the service, and (between verify and install) check build provenance with <code>gh attestation verify</code>. It's also where the tests get interesting, because the effects are external commands.</p>
+
+  <h3>Concepts</h3>
+  <ul>
+    <li><strong>Atomic replacement.</strong> <code>os.Rename</code> within one filesystem is atomic: any process opening the path sees the old file or the new file, never a torn half-write. That's <em>why</em> chapter 4 put the temp file in <code>filepath.Dir(cfg.BinPath)</code> rather than <code>/tmp</code> — a rename across filesystems isn't a rename at all. The running binary keeps executing its already-open old inode until the restart. This one idea is most of what "safe self-update" means.</li>
+    <li><strong>Running external commands.</strong> <code>exec.Command("systemctl", "restart", name).CombinedOutput()</code> — capture output so the error you wrap contains what systemctl actually said. For <code>gh</code>: <code>exec.LookPath</code> first, because a missing <code>gh</code> is policy ("skip, log, continue — the checksum already ran"), not an error. Note the asymmetry you must preserve: <em>missing</em> gh skips; <em>failing</em> gh aborts.</li>
+    <li><strong>Faking commands in tests.</strong> The trick from the reference is worth inventing yourself: write a tiny shell script named <code>systemctl</code> (or <code>gh</code>) into <code>t.TempDir()</code>, make it record its argv to a file and exit 0 or 1, then <code>t.Setenv("PATH", dir)</code> — replacing PATH entirely, so the host's real binaries can't leak in. Now "did we restart the right service?" is a file read.</li>
+    <li><strong>The defer-becomes-no-op pattern.</strong> <code>Update</code> can <code>defer os.Remove(tempFile)</code> right after a successful fetch: if install renames the file away, the remove fails silently; if anything aborts first, it cleans up. Compare with chapter 4's explicit cleanup and form an opinion.</li>
+    <li><strong>Asserting on log output.</strong> The "gh not found, skipping" branch's only observable effect is a log line. <code>log.SetOutput(&amp;buf)</code> + restore in <code>t.Cleanup</code> makes it testable. Ugly-but-honest beats untested.</li>
+  </ul>
+
+  <figure>
+    <svg viewBox="0 0 740 240" role="img" aria-label="Timeline of an atomic install: the old binary keeps serving from its open inode while the verified temp file in the same directory is renamed over the path; only the systemctl restart makes the process pick up the new file.">
+      <defs>
+        <marker id="arr5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+        </marker>
+      </defs>
+      <line x1="30" y1="120" x2="710" y2="120" stroke="currentColor" stroke-width="1.3" marker-end="url(#arr5)"/>
+      <g stroke="currentColor" stroke-width="1.3">
+        <line x1="120" y1="112" x2="120" y2="128"/>
+        <line x1="330" y1="112" x2="330" y2="128"/>
+        <line x1="540" y1="112" x2="540" y2="128"/>
+      </g>
+      <g fill="currentColor" font-size="12.5" text-anchor="middle">
+        <text x="120" y="100">temp file verified</text>
+        <text x="120" y="145" class="m" font-size="10.5" opacity="0.7">gitops-agent-update-* </text>
+        <text x="120" y="160" class="m" font-size="10.5" opacity="0.7">same dir as BinPath</text>
+        <text x="330" y="100">os.Rename</text>
+        <text x="330" y="145" class="m" font-size="10.5" opacity="0.7">atomic: path now = new file</text>
+        <text x="330" y="160" class="m" font-size="10.5" opacity="0.7">old inode still runs</text>
+        <text x="540" y="100">systemctl restart</text>
+        <text x="540" y="145" class="m" font-size="10.5" opacity="0.7">process re-execs the path,</text>
+        <text x="540" y="160" class="m" font-size="10.5" opacity="0.7">new binary live</text>
+      </g>
+      <g fill="currentColor" font-size="11" opacity="0.8">
+        <text x="150" y="35">old binary keeps running, untouched, this whole span</text>
+      </g>
+      <path d="M 40 45 L 40 55 L 535 55 L 535 45" stroke="currentColor" fill="none" stroke-width="1"/>
+      <g fill="currentColor" font-size="11" text-anchor="middle">
+        <text x="225" y="196">chmod 0755 first — rename preserves mode,</text>
+        <text x="225" y="212">and a non-executable agent binary is an outage</text>
+      </g>
+    </svg>
+    <figcaption>Why same-directory temp files matter: rename is only atomic within a filesystem, and atomicity is what lets this run while the old binary is live.</figcaption>
+  </figure>
+
+  <h3>Read</h3>
+  <ul class="reading">
+    <li><code>systemd/update.bash</code> + <code>scripts/lib/github-release.bash</code> — <span class="why">the remaining spec: version-file comparison, install step, restart, attestation policy (and the <code>GITOPS_AGENT_SKIP_ATTESTATION</code> escape hatch).</span></li>
+    <li><a href="https://pkg.go.dev/os/exec">pkg.go.dev — os/exec</a> — <span class="why">Command, CombinedOutput, LookPath; note ExitError if you want richer failure info.</span></li>
+    <li><a href="https://pkg.go.dev/testing#T.Setenv">pkg.go.dev — T.Setenv</a>, <a href="https://pkg.go.dev/testing#T.TempDir">T.TempDir</a>, <a href="https://pkg.go.dev/testing#T.Cleanup">T.Cleanup</a> — <span class="why">the modern test-hygiene trio; all three self-undo after the test.</span></li>
+    <li><a href="https://pkg.go.dev/runtime#pkg-constants">pkg.go.dev — runtime.GOARCH</a> — <span class="why">for deriving the default asset name; the bash spec's <code>uname -m</code> case maps to a much shorter Go switch.</span></li>
+  </ul>
+
+  <div class="assignment">
+    <div class="label">Assignment 5 — Update, end to end</div>
+    <p>Branch <code>feat/ch05-update-orchestration</code>. Finish <code>internal/selfupdate</code>:</p>
+    <ol>
+      <li>Grow <code>Config</code>: <code>BinPath</code>, <code>VersionFilePath</code>, <code>ServiceName</code>, <code>SkipAttestation</code>.</li>
+      <li><code>Update(cfg Config) error</code>: derive the asset name from <code>runtime.GOARCH</code> when unset (arm64/amd64 only — error otherwise), get the latest tag, read the installed tag from the version file (absent file = never installed), stop early with a log line when they match, otherwise fetch-verified → attest → install → write version file → restart.</li>
+      <li><code>verifyAttestation</code> in its own file: missing <code>gh</code> → log and skip; present-but-failing <code>gh</code> → abort with gh's combined output in the error; <code>SkipAttestation</code> → never invoke gh at all.</li>
+      <li>Install: chmod 0755, rename into place, write <code>tag + "\n"</code> to the version file.</li>
+    </ol>
+    <h4>Acceptance criteria — each is one test</h4>
+    <ul>
+      <li><em>Already up to date:</em> no download happens. Prove it with a fake server that fails the test on any request beyond <code>releases/latest</code>.</li>
+      <li><em>Installs a newer release:</em> binary content replaced, executable bit set, version file updated, and the systemctl stub's recorded argv is exactly <code>restart gitops-agent</code>.</li>
+      <li><em>Checksum mismatch aborts:</em> original binary byte-identical, version file unwritten, no temp litter.</li>
+      <li><em>Missing gh skips attestation:</em> update succeeds, log output mentions the skip.</li>
+      <li><em>Failing gh aborts:</em> original binary untouched.</li>
+      <li><em>SkipAttestation bypasses a failing gh:</em> proves the flag short-circuits before invocation.</li>
+      <li>Gates green; no test touches the real network, real systemctl, or real gh.</li>
+    </ul>
+  </div>
+
+  <details class="nudge">
+    <summary>Nudge (open only if stuck)</summary>
+    <p>Build the PATH-stub helper first and make it take a <code>map[string]int</code> of command-name → exit code. Every remaining test then reads as one line of arrangement. When a test needs "no gh at all", simply leave it out of the map — an empty PATH dir is the cleanest possible "command not found".</p>
+  </details>
+
+  <label class="ch-done"><input type="checkbox" data-done="5"> Mark chapter 5 done</label>
+</section>
+
+<!-- ================= CHAPTER 6 ================= -->
+<section class="chapter" id="ch-6" data-chapter="6">
+  <div class="ch-head">
+    <div class="eyebrow">Part 1 · gitops-agent update</div>
+    <h2><span class="ch-num">6</span>Wire the subcommand</h2>
+  </div>
+  <div class="ch-meta">
+    <span class="badge">~1 h</span>
+    <span class="badge deliver">PR · feat/ch06-update-wiring</span>
+  </div>
+
+  <p>The package works; now give it a front door. <code>gitops-agent update</code> is a thin adapter: resolve environment into a <code>Config</code>, call <code>selfupdate.Update</code>, let <code>dispatch</code> handle the exit code. The interesting decisions here are interface decisions, not algorithms.</p>
+
+  <h3>Concepts</h3>
+  <ul>
+    <li><strong>Env vars, not flags — because compatibility.</strong> <code>update.bash</code> is configured by <code>GITOPS_AGENT_REPO</code>, <code>GITOPS_AGENT_BIN</code>, etc., and <code>gitops-agent-update.service</code> already sets them. Keeping the exact same names means a host migrates by changing one <code>ExecStart=</code> line. Interface compatibility is a feature you build, not an accident.</li>
+    <li><strong>Secrets come from files, not the environment.</strong> The token is read from <code>GITHUB_TOKEN_FILE</code> (default <code>/etc/gitops-agent/github-token</code>), and a missing file is simply "no token". Environments leak — into <code>/proc</code>, logs, child processes; root-owned files don't.</li>
+    <li><strong>A tiny helper is fine.</strong> <code>envOr(key, def string) string</code> — three lines, used six times, tested once. Resist both temptations: inlining it six times, and pulling in a config library for it.</li>
+    <li><strong>Strictness at the edge.</strong> <code>update</code> takes no arguments — so error on any. Silent acceptance of <code>gitops-agent update --force</code> teaches users a flag that doesn't exist.</li>
+  </ul>
+
+  <h3>Read</h3>
+  <ul class="reading">
+    <li><code>systemd/gitops-agent-update.service</code> (on <code>main</code>) — <span class="why">the unit that will run this; read its comments about why it runs as root and what ExecStart points at today.</span></li>
+    <li><a href="https://12factor.net/config">The Twelve-Factor App — Config</a> — <span class="why">the case for env-var config, so you can also see where this repo deliberately deviates (the token).</span></li>
+    <li><a href="https://pkg.go.dev/os#ReadFile">pkg.go.dev — os.ReadFile</a> — <span class="why">note the read-then-check-error-later idiom for optional files.</span></li>
+  </ul>
+
+  <div class="assignment">
+    <div class="label">Assignment 6 — cmd/gitops-agent/update.go</div>
+    <p>Branch <code>feat/ch06-update-wiring</code>:</p>
+    <ol>
+      <li><code>update.go</code>: register <code>update</code> in <code>init()</code>; reject arguments; build a <code>selfupdate.Config</code> from the same env vars and defaults <code>update.bash</code> documents (repo, bin path, version file, service name, skip-attestation, token file → token, trimmed).</li>
+      <li><code>update_test.go</code>: argument rejection; <code>envOr</code> behavior for set/unset.</li>
+      <li>Run <code>gitops-agent</code> bare, with <code>-version</code>, and with <code>update</code> against a directory of stub binaries on PATH (your chapter 5 trick works outside tests too) to see the whole thing move.</li>
+    </ol>
+    <h4>Acceptance criteria</h4>
+    <ul>
+      <li><code>gitops-agent update</code> appears in <code>usage()</code> output without any change to <code>dispatch.go</code> — if you had to touch dispatch, revisit chapter 2.</li>
+      <li>All env names and defaults match <code>update.bash</code> exactly; a table in your PR description mapping them is a nice touch.</li>
+      <li>Bare invocation and <code>-version</code> still behave identically — the seam's promise, kept.</li>
+      <li>Gates green, PR open, <code>grade</code> passed.</li>
+    </ul>
+  </div>
+
+  <div class="callout good">
+    <span class="label">Milestone</span>
+    <p>With this PR merged, the binary can update itself — the entire functionality of <code>update.bash</code> + <code>github-release.bash</code>, in tested Go, with the bash still untouched. Compare your four PRs against <code>reference/update-subcommand</code> via <code>grade</code>, then take a break; you've earned Part 2.</p>
+  </div>
+
+  <label class="ch-done"><input type="checkbox" data-done="6"> Mark chapter 6 done</label>
+</section>
+
+<!-- ================= CHAPTER 7 ================= -->
+<section class="chapter" id="ch-7" data-chapter="7">
+  <div class="ch-head">
+    <div class="eyebrow">Part 2 · gitops-agent install</div>
+    <h2><span class="ch-num">7</span>Embed the assets</h2>
+  </div>
+  <div class="ch-meta">
+    <span class="badge">1–2 h</span>
+    <span class="badge deliver">PR · feat/ch07-embed-assets</span>
+  </div>
+
+  <p><strong>The mission for Part 2:</strong> provisioning a host — writing <code>config.toml</code>, installing the three systemd units, enabling the services — currently lives in external tooling. You'll move it into the binary as <code>gitops-agent install</code>, which means the binary must <em>carry its own templates</em>. That's this chapter: <code>go:embed</code>, plus the little line-substitution engine that turns the templates into host-specific files.</p>
+
+  <h3>Concepts</h3>
+  <ul>
+    <li><strong><code>go:embed</code> compiles files into the binary.</strong> A <code>//go:embed config.example.toml</code> directive above a <code>var ConfigExampleTOML string</code> makes the file's contents a compile-time constant, verified by the compiler (a typo'd path is a build error, not a runtime surprise). One binary, no "where do the templates live on this host" problem — which is the whole point for a single-file agent.</li>
+    <li><strong>Embed paths cannot climb.</strong> A pattern like <code>../config.example.toml</code> is rejected — embeds only reach files in the embedding package's directory and below. The files to embed live at the repo root (<code>config.example.toml</code>, <code>systemd/</code>), so the embedding Go file must live there too: a small root package (<code>package gitopsagent</code>) whose only job is holding assets, imported by <code>internal/installer</code>. When a language rule forces a structural concession, write the reason down in the package doc — you'll do exactly that.</li>
+    <li><strong>Template ≠ text/template.</strong> The substitution needed is "rewrite the line starting with <code>User=</code>", mirroring what a <code>sed s/^User=.*/…/</code> did before. A scanner over lines with a prefix match does this in ~20 lines with zero new concepts for the file's readers — and critically, every untouched line (comments included) passes through byte-for-byte. Reach for <code>text/template</code> when you control the template; here the templates are <em>real files a host also uses directly</em>, and they must stay valid as-is.</li>
+    <li><strong>Characterization tests.</strong> The guarantee "only the <code>User=</code> and <code>ReadWritePaths=</code> lines may differ from the template" can be tested literally: render against the real embedded template, then compare line-by-line against the template itself, asserting every other line is identical. This pins today's behavior down so refactors can't silently drift — the same technique you'd use to port any legacy system.</li>
+  </ul>
+
+  <figure>
+    <svg viewBox="0 0 720 270" role="img" aria-label="Embed reachability: a root assets package can embed config.example.toml and the systemd unit files below it; internal/installer cannot embed them because embed patterns cannot contain dot-dot, so it imports the root package instead.">
+      <defs>
+        <marker id="arr7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+        </marker>
+      </defs>
+      <g fill="none" stroke="currentColor" stroke-width="1.3">
+        <rect x="20" y="20" width="330" height="230" rx="10"/>
+        <rect x="45" y="60" width="200" height="46" rx="8" stroke-width="2"/>
+        <rect x="45" y="130" width="200" height="30" rx="6" opacity="0.7"/>
+        <rect x="45" y="170" width="200" height="30" rx="6" opacity="0.7"/>
+        <rect x="430" y="90" width="250" height="70" rx="8"/>
+      </g>
+      <g fill="currentColor" font-size="12.5">
+        <text x="34" y="44" class="m" font-size="11.5" opacity="0.8">module root /</text>
+        <text x="60" y="80" class="m" font-size="12">assets.go</text>
+        <text x="60" y="96" font-size="10.5" opacity="0.7">package gitopsagent</text>
+        <text x="60" y="150" class="m" font-size="11.5">config.example.toml</text>
+        <text x="60" y="190" class="m" font-size="11.5">systemd/*.service, *.timer</text>
+        <text x="445" y="113" class="m" font-size="12">internal/installer</text>
+        <text x="445" y="131" font-size="11" opacity="0.75">wants the templates,</text>
+        <text x="445" y="147" font-size="11" opacity="0.75">can't //go:embed ../..</text>
+      </g>
+      <g stroke="currentColor" stroke-width="1.3" fill="none">
+        <path d="M 120 106 L 120 124" marker-end="url(#arr7)"/>
+        <path d="M 130 106 L 130 164" marker-end="url(#arr7)"/>
+        <path d="M 430 112 C 380 95 300 88 251 84" marker-end="url(#arr7)"/>
+      </g>
+      <g fill="currentColor" font-size="11">
+        <text x="140" y="120" class="m" font-size="10.5">//go:embed ↓ (same dir &amp; below: ok)</text>
+        <text x="318" y="70">import</text>
+      </g>
+      <line x1="430" y1="150" x2="255" y2="150" stroke="currentColor" stroke-width="1.2" stroke-dasharray="3 4" opacity="0.6"/>
+      <text x="290" y="167" fill="currentColor" font-size="10.5" opacity="0.6" class="m">✕ embed across “..” — rejected</text>
+    </svg>
+    <figcaption>Why <code>assets.go</code> sits at the module root: embed patterns reach down, never up, so the package moves to where the files are and everyone else imports it.</figcaption>
+  </figure>
+
+  <h3>Read</h3>
+  <ul class="reading">
+    <li><a href="https://pkg.go.dev/embed">pkg.go.dev — embed</a> — <span class="why">short and complete; note the pattern rules that force the root-package move.</span></li>
+    <li><code>config.example.toml</code>, <code>systemd/gitops-agent.service</code> (on <code>main</code>) — <span class="why">the four files you'll embed; find the exact lines (<code>User=</code>, <code>ReadWritePaths=</code>, <code>repo_url</code>, <code>ssh_key_path</code>, <code>clone_path</code>) that need substitution.</span></li>
+    <li><a href="https://pkg.go.dev/bufio#Scanner">pkg.go.dev — bufio.Scanner</a> and <a href="https://pkg.go.dev/strings#Builder">strings.Builder</a> — <span class="why">the line loop; check Scanner's default buffer limit and decide whether these files could ever exceed it.</span></li>
+    <li><a href="https://en.wikipedia.org/wiki/Characterization_test">Characterization tests</a> — <span class="why">the idea in one page; you're about to write one.</span></li>
+  </ul>
+
+  <div class="assignment">
+    <div class="label">Assignment 7 — assets + the substitution engine</div>
+    <p>Branch <code>feat/ch07-embed-assets</code>:</p>
+    <ol>
+      <li><code>assets.go</code> at the module root: embed the example config and the three systemd units as exported strings, with a package doc explaining why this package exists where it does.</li>
+      <li><code>internal/installer</code>: a line-substitution helper (given prefix→value pairs, rewrite matching lines, first match wins, everything else byte-for-byte), plus <code>renderServiceUnit(tmpl, user, readWritePaths)</code> and <code>renderConfigTOML(tmpl, repoURL, sshKeyPath, clonePath)</code> — the TOML values quoted with <code>%q</code>.</li>
+      <li>Tests: substitutions land; and the characterization test — against the real embedded service unit, only the two intended lines differ, same line count, comments intact.</li>
+    </ol>
+    <h4>Acceptance criteria</h4>
+    <ul>
+      <li>A deliberately misspelled embed path fails to <em>compile</em> — try it once, revert it, and mention in the PR body that you did.</li>
+      <li>Rendering the config keeps its leading comment block verbatim — tested.</li>
+      <li><code>%q</code> quoting means a repo URL containing a quote can't produce broken TOML — you know why, and can tell the tutor.</li>
+      <li>Gates green, PR open, <code>grade</code> passed.</li>
+    </ul>
+  </div>
+
+  <details class="nudge">
+    <summary>Nudge (open only if stuck)</summary>
+    <p>Design the substitution helper's signature around its two callers before implementing it. A tiny struct like <code>{prefix, value}</code> and a slice of them keeps "first match wins" trivially implementable — and notice what ordering the slice gives you that a <code>map</code> wouldn't.</p>
+  </details>
+
+  <label class="ch-done"><input type="checkbox" data-done="7"> Mark chapter 7 done</label>
+</section>
+
+<!-- ================= CHAPTER 8 ================= -->
+<section class="chapter" id="ch-8" data-chapter="8">
+  <div class="ch-head">
+    <div class="eyebrow">Part 2 · gitops-agent install</div>
+    <h2><span class="ch-num">8</span>The idempotent installer</h2>
+  </div>
+  <div class="ch-meta">
+    <span class="badge">1.5–2 h</span>
+    <span class="badge deliver">PR · feat/ch08-installer</span>
+  </div>
+
+  <p>Now the orchestration: <code>installer.Install(cfg)</code>, which must be safe to run on a fresh host, on an already-provisioned host, and on a host whose operator hand-edited the config — the same call, three very different correct behaviors. Idempotency isn't a property you add at the end; it's the design.</p>
+
+  <h3>The three rules that make it idempotent</h3>
+  <ol>
+    <li><strong><code>config.toml</code> is written once, then owned by the operator.</strong> If it exists, leave it — a hand edit sticks forever. (<code>os.Stat</code>, treat only <code>os.IsNotExist</code> as "go ahead"; any other stat error is a real error.)</li>
+    <li><strong>The rendered service unit's <code>ReadWritePaths=</code> comes from the config <em>on disk</em>, not from this call's inputs.</strong> Rule 1 means the disk config may disagree with the flags; the disk wins. So: write-if-absent, then <em>read back</em> through <code>internal/config</code> — reusing the daemon's own loader, so there's exactly one definition of what valid config means.</li>
+    <li><strong>Restart only when it matters.</strong> Write the unit, but remember whether its content actually changed (read-old, compare, write). Restart the service if the unit changed <em>or</em> it isn't currently active; otherwise say so and leave it alone. A provisioning tool that bounces a healthy service on every run trains operators to fear running it.</li>
+  </ol>
+
+  <figure>
+    <svg viewBox="0 0 740 300" role="img" aria-label="Install flow: config written only if absent, then read back from disk; unit rendered from that config; daemon-reload and enable always run; restart runs only if the unit content changed or the service is inactive.">
+      <defs>
+        <marker id="arr8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+        </marker>
+      </defs>
+      <g fill="none" stroke="currentColor" stroke-width="1.3">
+        <rect x="20"  y="30" width="170" height="60" rx="8"/>
+        <rect x="240" y="30" width="170" height="60" rx="8"/>
+        <rect x="460" y="30" width="170" height="60" rx="8"/>
+        <rect x="240" y="150" width="170" height="60" rx="8"/>
+        <rect x="460" y="150" width="170" height="60" rx="8"/>
+        <rect x="240" y="240" width="170" height="44" rx="8" opacity="0.75"/>
+      </g>
+      <g fill="currentColor" font-size="12.5" text-anchor="middle">
+        <text x="105" y="55">config.toml</text>
+        <text x="105" y="72" font-size="11" opacity="0.75">write only if absent</text>
+        <text x="325" y="55">read back from disk</text>
+        <text x="325" y="72" class="m" font-size="10.5" opacity="0.7">config.Load — disk wins</text>
+        <text x="545" y="55">render unit</text>
+        <text x="545" y="72" class="m" font-size="10.5" opacity="0.7">User=, ReadWritePaths=</text>
+        <text x="325" y="175">changed? active?</text>
+        <text x="325" y="192" class="m" font-size="10.5" opacity="0.7">writeIfChanged + is-active</text>
+        <text x="545" y="175">restart</text>
+        <text x="545" y="192" class="m" font-size="10.5" opacity="0.7">systemctl restart</text>
+        <text x="325" y="259" font-size="12">no-op, log it</text>
+        <text x="325" y="274" font-size="10.5" opacity="0.7">healthy service left alone</text>
+      </g>
+      <g stroke="currentColor" stroke-width="1.3" fill="none">
+        <line x1="190" y1="60" x2="234" y2="60" marker-end="url(#arr8)"/>
+        <line x1="410" y1="60" x2="454" y2="60" marker-end="url(#arr8)"/>
+        <path d="M 545 90 L 545 120 L 325 120 L 325 144" marker-end="url(#arr8)"/>
+        <line x1="410" y1="180" x2="454" y2="180" marker-end="url(#arr8)"/>
+        <line x1="325" y1="210" x2="325" y2="234" marker-end="url(#arr8)"/>
+      </g>
+      <g fill="currentColor" font-size="11">
+        <text x="418" y="172">changed, or inactive</text>
+        <text x="335" y="228">unchanged &amp; active</text>
+      </g>
+      <text x="30" y="135" fill="currentColor" font-size="11" opacity="0.75">always: daemon-reload,</text>
+      <text x="30" y="151" fill="currentColor" font-size="11" opacity="0.75">enable service + timer</text>
+    </svg>
+    <figcaption>The decision that makes re-running safe. The update units skip the top row entirely — no host-specific lines, written verbatim.</figcaption>
+  </figure>
+
+  <h3>Concepts</h3>
+  <ul>
+    <li><strong>Effects behind a helper.</strong> A <code>systemctl(args ...string) error</code> wrapper (variadic, wraps CombinedOutput output into the error) keeps every call site one honest line and gives your tests a single choke point to stub — the chapter 5 PATH trick again, this time with an <em>appending</em> log so one test observes a sequence of calls.</li>
+    <li><strong>Security posture is code placement.</strong> Installing units is root-level behavior in a binary that otherwise never runs as root; it must be reachable only from the explicit subcommand, never from the reconcile loop. Say so in the package doc — in this repo, trust-boundary reasoning belongs next to the code that holds the boundary.</li>
+    <li><strong>The update units ride along.</strong> Write <code>gitops-agent-update.service</code> and <code>.timer</code> verbatim from the embeds and <code>enable --now</code> the timer. And this is the moment to edit the <em>source</em> unit: point its <code>ExecStart=</code> at <code>gitops-agent update</code> (your chapter 6 work), replacing the old root-owned-copy-of-a-script arrangement — rewrite the unit's comment to explain why the old risk (root execing a user-writable script) doesn't apply to a root-owned binary.</li>
+  </ul>
+
+  <h3>Read</h3>
+  <ul class="reading">
+    <li><code>internal/config/config.go</code> — <span class="why">the loader you're about to reuse; check what it validates so you know what "read back" can fail on.</span></li>
+    <li><a href="https://pkg.go.dev/os#Stat">pkg.go.dev — os.Stat / IsNotExist</a> — <span class="why">the exists-check idiom and its third case people forget (an error that is neither nil nor not-exist).</span></li>
+    <li><a href="https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html#ReadWritePaths=">systemd.exec — ReadWritePaths=</a> — <span class="why">what the substituted line actually grants; you're generating security config, know what it means.</span></li>
+  </ul>
+
+  <div class="assignment">
+    <div class="label">Assignment 8 — installer.Install</div>
+    <p>Branch <code>feat/ch08-installer</code>. Extend <code>internal/installer</code> with an <code>installer.Config</code> (user, repo URL, ssh key, clone path, plus target paths for config and the three units — real <code>/etc</code> paths wired later, temp dirs in tests) and <code>Install(cfg) error</code> implementing the three rules and the update units. Edit <code>systemd/gitops-agent-update.service</code> as described.</p>
+    <h4>Acceptance criteria — each is one test</h4>
+    <ul>
+      <li><em>Fresh dir:</em> config rendered with the substituted values; service unit has <code>User=</code> and <code>ReadWritePaths=</code> right; update units byte-identical to their embeds; systemctl log shows a restart (service wasn't active) and <code>enable --now</code> for the timer.</li>
+      <li><em>Existing config:</em> a hand-written config with a <em>different</em> clone path survives untouched, and the rendered unit's <code>ReadWritePaths=</code> follows the disk value, not the flags.</li>
+      <li><em>Unchanged re-run, service active:</em> no restart in the log.</li>
+      <li><em>Changed unit content:</em> restart happens.</li>
+      <li>Gates green; the stub systemctl's <code>is-active</code> exit code is controllable per test.</li>
+    </ul>
+  </div>
+
+  <details class="nudge">
+    <summary>Nudge (open only if stuck)</summary>
+    <p>Write <code>writeIfChanged(path, content) (bool, error)</code> first and let <code>Install</code> read as prose. For the stub: a shell script that appends <code>"$@"</code> to a log file, and exits 0/1 for <code>is-active</code> based on how the test generated it, covers every case this chapter needs.</p>
+  </details>
+
+  <label class="ch-done"><input type="checkbox" data-done="8"> Mark chapter 8 done</label>
+</section>
+
+<!-- ================= CHAPTER 9 ================= -->
+<section class="chapter" id="ch-9" data-chapter="9">
+  <div class="ch-head">
+    <div class="eyebrow">Part 2 · gitops-agent install</div>
+    <h2><span class="ch-num">9</span>Flags, users, and wiring</h2>
+  </div>
+  <div class="ch-meta">
+    <span class="badge">~1 h</span>
+    <span class="badge deliver">PR · feat/ch09-install-wiring</span>
+  </div>
+
+  <p>The front door for Part 2 — and unlike <code>update</code>, this one takes flags, because a human runs it interactively at provisioning time (env vars are for units; flags are for people; keep an opinion on which is which). The other new topic: figuring out <em>who</em> the agent should run as, when the command itself runs under <code>sudo</code>.</p>
+
+  <h3>Concepts</h3>
+  <ul>
+    <li><strong><code>flag.NewFlagSet</code>, not the global <code>flag</code>.</strong> The daemon already owns the global flag set; a subcommand gets its own, created with <code>flag.ContinueOnError</code> so a parse failure comes back as an error for <code>dispatch</code> to render, instead of <code>os.Exit</code>ing from the middle of a library call.</li>
+    <li><strong>Required flags are your job.</strong> The flag package has no "required" — check for the zero value after <code>Parse</code> and return an error naming the flag. Ugly? Slightly. Explicit? Completely.</li>
+    <li><strong>The <code>SUDO_USER</code> chain.</strong> <code>sudo gitops-agent install</code> runs as root, but the <em>service</em> should run as the human who typed sudo. Resolution order: <code>-user</code> flag → <code>$SUDO_USER</code> → current user. Then <code>os/user.Lookup</code> gets that user's home dir for the SSH-key default. Each step is a documented decision, not a fallback accident.</li>
+    <li><strong>Keep the adapter thin.</strong> Like chapter 6: resolve inputs, build <code>installer.Config</code> with the real <code>/etc</code> paths, call <code>Install</code>. If logic wants to creep into <code>install.go</code>, it probably belongs in the package where it can be tested without root.</li>
+  </ul>
+
+  <h3>Read</h3>
+  <ul class="reading">
+    <li><a href="https://pkg.go.dev/flag">pkg.go.dev — flag</a> — <span class="why">FlagSet, ContinueOnError, and how defaults print in usage.</span></li>
+    <li><a href="https://pkg.go.dev/os/user">pkg.go.dev — os/user</a> — <span class="why">Current and Lookup; note both can fail and what that means here.</span></li>
+    <li><code>man sudo</code> (the ENVIRONMENT section) — <span class="why">what <code>SUDO_USER</code> is and when it's set; the whole chain rests on it.</span></li>
+  </ul>
+
+  <div class="assignment">
+    <div class="label">Assignment 9 — cmd/gitops-agent/install.go</div>
+    <p>Branch <code>feat/ch09-install-wiring</code>: register <code>install</code>; flags <code>-repo-url</code> (required), <code>-user</code>, <code>-ssh-key-path</code>, <code>-clone-path</code>, <code>-config</code> with the defaults the docs will promise; resolve user and key path per the chain; wire to <code>installer.Install</code>. Tests: missing <code>-repo-url</code> errors naming the flag; an unknown flag errors.</p>
+    <h4>Acceptance criteria</h4>
+    <ul>
+      <li><code>gitops-agent install -h</code> prints a usable flag summary (FlagSet gives it to you — check it reads sensibly).</li>
+      <li>Both subcommands listed in <code>usage()</code>; bare invocation still untouched.</li>
+      <li>Gates green, PR open, <code>grade</code> passed. That's <code>reference/install-subcommand</code> matched — Part 2 done.</li>
+    </ul>
+  </div>
+
+  <label class="ch-done"><input type="checkbox" data-done="9"> Mark chapter 9 done</label>
+</section>
+
+<!-- ================= CHAPTER 10 ================= -->
+<section class="chapter" id="ch-10" data-chapter="10">
+  <div class="ch-head">
+    <div class="eyebrow">Part 3 · The boundary</div>
+    <h2><span class="ch-num">10</span>The bootstrap script and the shim</h2>
+  </div>
+  <div class="ch-meta">
+    <span class="badge">1–2 h</span>
+    <span class="badge deliver">PR · feat/ch10-bootstrap</span>
+  </div>
+
+  <p>One step can never live in the binary: getting the binary onto a fresh host in the first place. This chapter is bash, deliberately — knowing where the Go/bash boundary <em>belongs</em> is a Go skill. You'll write <code>scripts/install.sh</code> (download → verify → install → <code>exec gitops-agent install</code>), then reduce the now-redundant <code>update.bash</code> to a deprecation shim.</p>
+
+  <figure>
+    <svg viewBox="0 0 740 200" role="img" aria-label="Bootstrap trust chain: the operator reads install.sh before running it; the script verifies the downloaded binary by checksum and attestation; the verified binary then installs config and units; from then on the update subcommand maintains the host.">
+      <defs>
+        <marker id="arr10" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+        </marker>
+      </defs>
+      <g fill="none" stroke="currentColor" stroke-width="1.3">
+        <rect x="20"  y="50" width="150" height="62" rx="8"/>
+        <rect x="215" y="50" width="150" height="62" rx="8"/>
+        <rect x="410" y="50" width="150" height="62" rx="8"/>
+        <rect x="605" y="50" width="115" height="62" rx="8"/>
+      </g>
+      <g fill="currentColor" font-size="12.5" text-anchor="middle">
+        <text x="95"  y="74">you</text>
+        <text x="95"  y="92" font-size="10.5" opacity="0.7">read install.sh,</text>
+        <text x="95"  y="105" font-size="10.5" opacity="0.7">then run it as root</text>
+        <text x="290" y="74">install.sh</text>
+        <text x="290" y="92" font-size="10.5" opacity="0.7">checksum + attestation,</text>
+        <text x="290" y="105" font-size="10.5" opacity="0.7">install(1) to /usr/local/bin</text>
+        <text x="485" y="74">the binary</text>
+        <text x="485" y="92" class="m" font-size="10.5" opacity="0.7">exec … install</text>
+        <text x="485" y="105" font-size="10.5" opacity="0.7">config + units (ch 8–9)</text>
+        <text x="662" y="74">the timer</text>
+        <text x="662" y="92" class="m" font-size="10.5" opacity="0.7">… update</text>
+        <text x="662" y="105" font-size="10.5" opacity="0.7">daily (ch 3–6)</text>
+      </g>
+      <g stroke="currentColor" stroke-width="1.3" fill="none">
+        <line x1="170" y1="81" x2="209" y2="81" marker-end="url(#arr10)"/>
+        <line x1="365" y1="81" x2="404" y2="81" marker-end="url(#arr10)"/>
+        <line x1="560" y1="81" x2="599" y2="81" marker-end="url(#arr10)"/>
+      </g>
+      <g fill="currentColor" font-size="11" text-anchor="middle" opacity="0.8">
+        <text x="370" y="155">nothing verifies the script itself — that's why the docs say “read it first”,</text>
+        <text x="370" y="171">and why everything downstream of it is verified, tested Go</text>
+      </g>
+    </svg>
+    <figcaption>The bootstrap boundary: exactly one unverified hop, kept as small and readable as possible, handing off to the binary at the first opportunity.</figcaption>
+  </figure>
+
+  <h3>Concepts</h3>
+  <ul>
+    <li><strong>This repo's shell rules are law.</strong> <code>set -euo pipefail</code> and a strict <code>IFS</code>; long-running commands must show progress (curl gets <code>-S -L</code> but <em>not</em> <code>-s</code> for the big download — silent looks hung over slow SSH); <code>shellcheck</code> clean, with any <code>disable</code> justified in a comment. See CLAUDE.md.</li>
+    <li><strong>Pin the transport.</strong> <code>curl --proto '=https' --tlsv1.2</code> — refuse plaintext and ancient TLS even if a URL or redirect tries. Cheap to type, embarrassing to omit from a script whose whole job is trust.</li>
+    <li><strong><code>mktemp -d</code> + <code>trap … EXIT</code></strong> is bash's <code>t.TempDir()</code>: the workdir cleans up on every exit path, success or failure. And <code>install -o root -g root -m 0755</code> beats <code>cp</code>: it writes a temp file in the destination directory and renames — the same atomicity you built in chapter 5, provided by coreutils.</li>
+    <li><strong>Deprecate loudly, break nothing.</strong> The shim keeps old hosts working: honor <code>GITOPS_AGENT_BIN</code>, print one clear stderr notice saying what to do (<code>re-run scripts/install.sh</code>), then <code>exec "$BIN" update</code>. <code>exec</code> replaces the process — exit code and signals flow through untouched, which is exactly what systemd needs.</li>
+  </ul>
+
+  <h3>Read</h3>
+  <ul class="reading">
+    <li><code>CLAUDE.md</code> (shell section) — <span class="why">the house rules you're being graded against.</span></li>
+    <li><a href="https://www.shellcheck.net/">shellcheck</a> — <span class="why">run it locally; read each finding rather than pattern-matching fixes.</span></li>
+    <li><a href="https://google.github.io/styleguide/shellguide.html">Google Shell Style Guide</a> — <span class="why">a defensible default for everything CLAUDE.md doesn't specify.</span></li>
+    <li>Your own chapters 3–5 — <span class="why">the script's verify steps mirror the Go you already wrote; keep the log lines consistent between the two, operators see both.</span></li>
+  </ul>
+
+  <div class="assignment">
+    <div class="label">Assignment 10 — install.sh + the shim</div>
+    <p>Branch <code>feat/ch10-bootstrap</code>, two commits:</p>
+    <ol>
+      <li><code>scripts/install.sh</code>: arch detection (<code>uname -m</code> → asset name, error on anything else), root/sudo detection, resolve latest tag via the API (<code>jq</code>), download binary + checksum with progress, verify checksum, attestation policy identical to chapter 5 (missing gh skips with a log; <code>GITOPS_AGENT_SKIP_ATTESTATION=1</code> opts out; failure aborts), install, then <code>exec</code> the binary's <code>install</code> subcommand passing <code>"$@"</code> straight through.</li>
+      <li>Reduce <code>systemd/update.bash</code> to the shim described above, with a header comment explaining who still runs it and until when. <code>scripts/lib/github-release.bash</code> stays — deleting it is a later release's cleanup, and the shim's header can say that too.</li>
+    </ol>
+    <h4>Acceptance criteria</h4>
+    <ul>
+      <li><code>shellcheck scripts/install.sh systemd/update.bash</code> — clean.</li>
+      <li><code>bash -n</code> both; walk the script once with the download URLs pointed at a local file server (<code>python3 -m http.server</code>) or read it line-by-line with the tutor if you'd rather not stage that.</li>
+      <li>Every failure path prints an <code>Error:</code> line to stderr and exits non-zero; no failure path can reach the <code>install</code> handoff.</li>
+      <li>Gates (Go ones too — CI runs everything), PR open, <code>grade</code> passed against <code>reference/install-sh</code> and <code>reference/update-bash-shim</code>.</li>
+    </ul>
+  </div>
+
+  <label class="ch-done"><input type="checkbox" data-done="10"> Mark chapter 10 done</label>
+</section>
+
+<!-- ================= CHAPTER 11 ================= -->
+<section class="chapter" id="ch-11" data-chapter="11">
+  <div class="ch-head">
+    <div class="eyebrow">Part 3 · The boundary</div>
+    <h2><span class="ch-num">11</span>Write it down</h2>
+  </div>
+  <div class="ch-meta">
+    <span class="badge">~1 h</span>
+    <span class="badge deliver">PR · feat/ch11-docs</span>
+  </div>
+
+  <p>The system changed shape; the docs still describe the old one. The final assignment is prose — and it's in the curriculum on purpose, because operator docs are part of what you shipped, and because writing them is the best audit of your own understanding. If a section is hard to write, you usually built something hard to explain.</p>
+
+  <h3>What good looks like here</h3>
+  <ul>
+    <li><strong><code>docs/install.md</code> tells the reader what to run, in order of likelihood:</strong> bootstrap script first (with the "read it before you run it" caveat — the trust chain figure from chapter 10, in words), then the by-hand release path, then reference tables for both subcommands (flags for <code>install</code>, env vars for <code>update</code> — your chapter 6 PR table is most of this), then a migration section for hosts provisioned under the old regime: what they currently have, that nothing forces them to move, the one command that moves them, and what's safe to delete afterwards.</li>
+    <li><strong><code>docs/security.md</code> owns the trade.</strong> Moving the updater into the binary it updates gave up a real property: a separately-installed updater could heal a compromised binary on the next cycle; a self-updating binary can be shipped one bad release that permanently wedges updates. Write that down plainly — what was lost, why it's accepted (weigh it against the docker-group reality and the retired bash attack surface), and what a reader with a stricter threat model should do instead. Security docs that only list strengths are marketing.</li>
+  </ul>
+
+  <h3>Read</h3>
+  <ul class="reading">
+    <li><a href="https://documentation.divio.com/">The Grand Unified Theory of Documentation</a> — <span class="why">install.md is a how-to guide with reference tables; keep the modes separate and both get better.</span></li>
+    <li><code>docs/security.md</code> (on <code>main</code>) — <span class="why">match its existing register: plain sentences, threats named concretely, no hedging.</span></li>
+  </ul>
+
+  <div class="assignment">
+    <div class="label">Assignment 11 — the docs PR</div>
+    <p>Branch <code>feat/ch11-docs</code>: rewrite <code>docs/install.md</code> for the binary-driven flow and add the self-update tradeoff section to <code>docs/security.md</code>. Every flag, env var, default, and path must match what your code actually does — check each against the source, not your memory.</p>
+    <h4>Done when</h4>
+    <ul>
+      <li>A stranger with a fresh Pi could go from zero to a running agent using install.md alone.</li>
+      <li><code>grade</code> passed against <code>reference/install-docs</code> — expect the comparison to be opinion-rich rather than right/wrong; argue with the reference where you disagree.</li>
+    </ul>
+  </div>
+
+  <div class="callout good">
+    <span class="label">Course complete</span>
+    <p>You've rebuilt five PRs' worth of production Go: an HTTP client with a real test harness, cryptographic verification, atomic file replacement, process orchestration, compile-time asset embedding, an idempotent installer, and the judgment calls around a trust boundary. Go back to chapter 1's field questions — they should feel almost insultingly easy now. That delta is the course.</p>
+  </div>
+
+  <label class="ch-done"><input type="checkbox" data-done="11"> Mark chapter 11 done</label>
+</section>
+
+<!-- ================= APPENDIX ================= -->
+<section class="chapter" id="appendix" data-chapter="A">
+  <div class="ch-head">
+    <div class="eyebrow">Appendix</div>
+    <h2><span class="ch-num">A</span>Reference map &amp; the shelf</h2>
+  </div>
+
+  <h3>The answer key</h3>
+  <p>The original implementation lives in five stacked branches. Each diffs against the previous, so you can view any layer in isolation:</p>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Chapters</th><th>Reference branch</th><th>Contains</th></tr></thead>
+    <tbody>
+      <tr><td>3–6</td><td><code>reference/update-subcommand</code></td><td><code>internal/selfupdate</code>, <code>cmd/gitops-agent/update*.go</code></td></tr>
+      <tr><td>7–9</td><td><code>reference/install-subcommand</code></td><td><code>assets.go</code>, <code>internal/installer</code>, <code>cmd/gitops-agent/install*.go</code>, the update-unit edit</td></tr>
+      <tr><td>10</td><td><code>reference/install-sh</code></td><td><code>scripts/install.sh</code></td></tr>
+      <tr><td>10</td><td><code>reference/update-bash-shim</code></td><td><code>systemd/update.bash</code> reduced to the shim</td></tr>
+      <tr><td>11</td><td><code>reference/install-docs</code></td><td><code>docs/install.md</code> rewrite, <code>docs/security.md</code> addition</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <pre><code># one layer at a time (each branch stacks on the previous):
+git fetch origin 'refs/heads/reference/*:refs/remotes/origin/reference/*'
+git diff origin/main..origin/reference/update-subcommand
+git diff origin/reference/update-subcommand..origin/reference/install-subcommand
+# …and so on down the table</code></pre>
+
+  <h3>The shelf — references worth owning</h3>
+  <ul class="reading">
+    <li><a href="https://go.dev/doc/effective_go">Effective Go</a> — <span class="why">still the canonical "how to sound like Go" document.</span></li>
+    <li><a href="https://go.dev/wiki/CodeReviewComments">Go Code Review Comments</a> — <span class="why">the checklist <code>grade</code> is quietly using on you.</span></li>
+    <li><a href="https://gobyexample.com/">Go by Example</a> — <span class="why">fastest lookup for "what's the idiom for X".</span></li>
+    <li><a href="https://pkg.go.dev/std">pkg.go.dev/std</a> — <span class="why">browse the standard library index once, end to end; knowing what exists is half of "prefer the standard library".</span></li>
+    <li><a href="https://go.dev/blog/">The Go Blog</a> — <span class="why">the error-handling, JSON, and slices posts linked from chapters are part of a genuinely good archive.</span></li>
+    <li><a href="https://dave.cheney.net/practical-go/presentations/qcon-china.html">Dave Cheney — Practical Go</a> — <span class="why">opinionated real-world advice that mostly matches this repo's style.</span></li>
+    <li><a href="https://quii.gitbook.io/learn-go-with-tests/">Learn Go with Tests</a> — <span class="why">if you enjoyed the test-first moments in chapters 4–5, this book is that, expanded.</span></li>
+  </ul>
+
+  <p style="margin-top:36px; font-size:14px; color: var(--muted);">Built from PRs #7–#11 of oddsund/gitops-agent. Course scaffolding lives on <code>claude/go-gitops-agent-curriculum-6v7ymk</code>; the <code>tutor</code> and <code>grade</code> skills in <code>.claude/skills/</code> are the interactive half of this document.</p>
+</section>
+
+</div>
+</main>
+</div>
+
+<script>
+(function () {
+  // Progress checkboxes — per-browser convenience only; the page must work without storage.
+  var boxes = document.querySelectorAll('input[data-done]');
+  function key(n) { return 'ga-curriculum-done-' + n; }
+  boxes.forEach(function (box) {
+    var n = box.getAttribute('data-done');
+    try { box.checked = localStorage.getItem(key(n)) === '1'; } catch (e) {}
+    reflect(box);
+    box.addEventListener('change', function () {
+      try {
+        if (box.checked) { localStorage.setItem(key(n), '1'); }
+        else { localStorage.removeItem(key(n)); }
+      } catch (e) {}
+      reflect(box);
+    });
+  });
+  function reflect(box) {
+    var n = box.getAttribute('data-done');
+    var label = box.closest('.ch-done');
+    if (label) { label.classList.toggle('checked', box.checked); }
+    var navLink = document.querySelector('nav.toc a[href="#ch-' + n + '"]');
+    if (navLink) {
+      var mark = navLink.querySelector('.done-mark');
+      if (box.checked && !mark) {
+        mark = document.createElement('span');
+        mark.className = 'done-mark';
+        mark.textContent = '✓';
+        navLink.appendChild(mark);
+      } else if (!box.checked && mark) {
+        mark.remove();
+      }
+    }
+  }
+
+  // Scrollspy — highlight the chapter in view.
+  var sections = Array.prototype.slice.call(document.querySelectorAll('section.chapter'));
+  var links = {};
+  sections.forEach(function (s) {
+    var a = document.querySelector('nav.toc a[href="#' + s.id + '"]');
+    if (a) { links[s.id] = a; }
+  });
+  if ('IntersectionObserver' in window) {
+    var current = null;
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) {
+          if (current && links[current]) { links[current].classList.remove('active'); }
+          current = entry.target.id;
+          if (links[current]) { links[current].classList.add('active'); }
+        }
+      });
+    }, { rootMargin: '-20% 0px -70% 0px' });
+    sections.forEach(function (s) { io.observe(s); });
+  }
+})();
+</script>
+</body>
+</html>
