@@ -8,22 +8,10 @@
 package selfupdate
 
 import (
-	"cmp"
 	"encoding/json"
 	"fmt"
 	"net/http"
 )
-
-type Config struct {
-	// Empty defaults to "oddsund/gitops-agent"
-	Repo string
-	// Empty defaults to no token
-	Token string
-	// Empty defaults to production github
-	APIBaseURL string
-	// Empty defaults to http.DefaultClient
-	HTTPClient *http.Client
-}
 
 type gitHubResponse struct {
 	TagName string `json:"tag_name"`
@@ -64,13 +52,4 @@ func latestReleaseTag(cfg Config) (string, error) {
 	}
 
 	return gh.TagName, nil
-}
-
-func (cfg Config) populateWithDefaultValues() Config {
-	return Config{
-		APIBaseURL: cmp.Or(cfg.APIBaseURL, "https://api.github.com"),
-		Repo:       cmp.Or(cfg.Repo, "oddsund/gitops-agent"),
-		Token:      cfg.Token,
-		HTTPClient: cmp.Or(cfg.HTTPClient, http.DefaultClient),
-	}
 }
