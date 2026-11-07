@@ -34,7 +34,7 @@ const servicesManifest = "services.toml"
 
 // version is set at build time via -ldflags "-X main.version=..." (see
 // .github/workflows/release.yml), which passes the release
-// tag -- the exact string update.bash also writes to installed-version, so
+// tag -- the exact string `gitops-agent update` also writes to installed-version, so
 // a provisioning check can compare the two with a plain string equality
 // check. A plain `go build` leaves it at "dev".
 var version = "dev"
@@ -44,6 +44,7 @@ func main() {
 		os.Exit(dispatch(os.Stderr, os.Args[1], os.Args[2:]))
 	}
 
+	flag.Usage = printDaemonUsage
 	configPath := flag.String("config", "/etc/gitops-agent/config.toml", "path to config.toml")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
@@ -81,6 +82,19 @@ func main() {
 		log.Fatalf("gitops-agent: %v", err)
 	}
 	log.Printf("gitops-agent: shutting down")
+}
+
+// printDaemonUsage is what -h prints. It lists the subcommands because
+// systemd/update.bash probes `gitops-agent -h` to tell a binary that has
+// the update subcommand from one that predates it. -h is the probe because
+// every build parses flags before it starts the daemon, so asking an old
+// binary for help is safe, whereas `gitops-agent update` on an old binary
+// starts the reconcile loop.
+func printDaemonUsage() {
+	out := flag.CommandLine.Output()
+	usage(out)
+	fmt.Fprintln(out, "\nflags:")
+	flag.PrintDefaults()
 }
 
 // startStatusServer serves the status page (internal/statusserver) in the

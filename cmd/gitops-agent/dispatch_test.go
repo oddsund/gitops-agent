@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"errors"
+	"flag"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -48,6 +50,21 @@ func TestUsageListsSubcommands(t *testing.T) {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("usage = %q, want it to contain %q", buf.String(), want)
 		}
+	}
+}
+
+// systemd/update.bash looks in the output of `gitops-agent -h` for this exact
+// line to decide whether the binary has the update subcommand. Changing the
+// format breaks that guard.
+func TestDaemonHelpListsUpdateForShim(t *testing.T) {
+	var buf bytes.Buffer
+	flag.CommandLine.SetOutput(&buf)
+	defer flag.CommandLine.SetOutput(nil)
+
+	printDaemonUsage()
+
+	if !slices.Contains(strings.Split(buf.String(), "\n"), "  update") {
+		t.Errorf("-h output = %q, want a line %q", buf.String(), "  update")
 	}
 }
 
