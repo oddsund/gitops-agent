@@ -27,6 +27,7 @@ var (
 	errDown    = errors.New("down boom")
 	errChange  = errors.New("change boom")
 	errLoad    = errors.New("load boom")
+	errRemove  = errors.New("remove boom")
 )
 
 var (
@@ -103,8 +104,22 @@ func (f *fakeLoader) LoadServices(path string) (*config.ServicesConfig, error) {
 }
 
 type fakeDecrypter struct {
-	j       *journal
-	failFor map[string]error
+	j          *journal
+	failFor    map[string]error
+	removeFail map[string]error
+	removed    []string       // every RemoveServiceSecrets call, in order
+	removedAt  map[string]int // len(j.entries) when the name was last removed
+}
+
+// RemoveServiceSecrets deliberately does not write to the journal so the
+// exact-journal assertions elsewhere stay unchanged.
+func (f *fakeDecrypter) RemoveServiceSecrets(name string) error {
+	f.removed = append(f.removed, name)
+	if f.removedAt == nil {
+		f.removedAt = map[string]int{}
+	}
+	f.removedAt[name] = len(f.j.entries)
+	return f.removeFail[name]
 }
 
 func (f *fakeDecrypter) DecryptServiceSecrets(serviceDir, serviceName string) error {
@@ -165,7 +180,7 @@ func newHarness(t *testing.T, manifest ...string) *harness {
 		syncer:  &fakeSyncer{steps: []syncStep{{res: result(false)}}},
 		changes: &fakeChanges{changed: map[string]bool{}},
 		loader:  &fakeLoader{cfg: svcs(manifest...)},
-		dec:     &fakeDecrypter{j: j, failFor: map[string]error{}},
+		dec:     &fakeDecrypter{j: j, failFor: map[string]error{}, removeFail: map[string]error{}},
 		dep:     &fakeDeployer{j: j, deployFail: map[string]error{}, downFail: map[string]error{}},
 		j:       j,
 		clock:   &fakeClock{t: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)},
@@ -854,4 +869,149 @@ func TestRun_ActiveTransitionLogged(t *testing.T) {
 	if !strings.Contains(buf.String(), "new commits: reconciling every") {
 		t.Errorf("log = %q", buf.String())
 	}
+}
+
+func assertRemoved(t *testing.T, h *harness, want ...string) {
+	t.Helper()
+	if strings.Join(h.dec.removed, ",") != strings.Join(want, ",") {
+		t.Fatalf("removed = %v, want %v", h.dec.removed, want)
+	}
+}
+
+func TestRunOnce_RemovesSecretsAfterTeardown(t *testing.T) {
+	h := newHarness(t, "a:apps/a:true", "b:apps/b:true")
+	_, err := h.cycle(t, false)
+	mustNoErr(t, err)
+	assertRemoved(t, h)
+
+	h.loader.cfg = svcs("a:apps/a:true", "b:apps/b:false")
+	_, err = h.cycle(t, false)
+	mustNoErr(t, err)
+	assertRemoved(t, h, "b")
+	if h.dec.removedAt["b"] <= h.j.index("down:/clone/apps/b") {
+		t.Errorf("secrets removed before down: %v at %d", h.j.entries, h.dec.removedAt["b"])
+	}
+}
+
+func TestRunOnce_RemovesSecretsForServiceDeletedFromManifest(t *testing.T) {
+	h := newHarness(t, "a:apps/a:true", "b:apps/b:true")
+	_, _ = h.cycle(t, false)
+
+	h.loader.cfg = svcs("a:apps/a:true")
+	_, err := h.cycle(t, false)
+	mustNoErr(t, err)
+	assertRemoved(t, h, "b")
+}
+
+func TestRunOnce_DownFailureKeepsSecrets(t *testing.T) {
+	h := newHarness(t, "a:apps/a:true", "b:apps/b:true")
+	_, _ = h.cycle(t, false)
+
+	h.loader.cfg = svcs("a:apps/a:true", "b:apps/b:false")
+	h.dep.downFail["/clone/apps/b"] = errDown
+	for i := 0; i < 3; i++ {
+		_, err := h.cycle(t, false)
+		if !errors.Is(err, errDown) {
+			t.Fatalf("cycle %d err = %v", i, err)
+		}
+	}
+	assertRemoved(t, h)
+
+	h.dep.downFail["/clone/apps/b"] = nil
+	_, err := h.cycle(t, false)
+	mustNoErr(t, err)
+	assertRemoved(t, h, "b")
+}
+
+func TestRunOnce_DisabledServiceSecretsRemovedEveryCycle(t *testing.T) {
+	h := newHarness(t, "a:apps/a:true", "c:apps/c:false")
+	_, err := h.cycle(t, false)
+	mustNoErr(t, err)
+	h.changes.changed = map[string]bool{"apps/a": true}
+	_, err = h.cycle(t, true)
+	mustNoErr(t, err)
+	h.clock.advance(2 * time.Hour)
+	_, err = h.cycle(t, false)
+	mustNoErr(t, err)
+	assertRemoved(t, h, "c", "c", "c")
+}
+
+func TestRunOnce_EnabledServiceKeepsSecretsOnFailure(t *testing.T) {
+	h := newHarness(t, "a:apps/a:true", "b:apps/b:true")
+	h.dep.deployFail["/clone/apps/a"] = errDeploy
+	h.dec.failFor["b"] = errDecrypt
+	_, err := h.cycle(t, false)
+	if !errors.Is(err, errDeploy) || !errors.Is(err, errDecrypt) {
+		t.Fatalf("err = %v", err)
+	}
+	assertRemoved(t, h)
+}
+
+func TestRunOnce_SecretsRemovalFailureIsolated(t *testing.T) {
+	h := newHarness(t, "a:apps/a:true", "b:apps/b:true")
+	_, _ = h.cycle(t, false)
+
+	h.dec.removeFail["b"] = errRemove
+	h.loader.cfg = svcs("a:apps/a:true", "b:apps/b:false")
+	h.changes.changed = map[string]bool{"apps/a": true}
+	h.j.reset()
+	_, err := h.cycle(t, true)
+	if !errors.Is(err, errRemove) || !strings.Contains(err.Error(), "removing secrets for b") {
+		t.Fatalf("err = %v", err)
+	}
+	if h.j.index("deploy:/clone/apps/a") < 0 {
+		t.Errorf("a not deployed: %v", h.j.entries)
+	}
+	assertState(t, h, state.State{"a": "/clone/apps/a"})
+	if s := svcStatus(t, h.r.Tracker, "b"); !s.LastAttemptOK {
+		t.Errorf("b = %+v", s)
+	}
+
+	h.dec.removed = nil
+	_, err = h.cycle(t, false)
+	if !errors.Is(err, errRemove) {
+		t.Fatalf("retry err = %v", err)
+	}
+	assertRemoved(t, h, "b")
+
+	h.dec.removeFail["b"] = nil
+	_, err = h.cycle(t, false)
+	mustNoErr(t, err)
+}
+
+func TestRunOnce_NoManifestNoRemoval(t *testing.T) {
+	h := newHarness(t)
+	h.loader.cfg = nil
+	h.loader.err = errLoad
+	_, err := h.cycle(t, false)
+	mustNoErr(t, err)
+	assertRemoved(t, h)
+}
+
+func TestRunOnce_RenamedServiceOnlyOldNameRemoved(t *testing.T) {
+	h := newHarness(t, "a:apps/a:true")
+	_, err := h.cycle(t, false)
+	mustNoErr(t, err)
+
+	h.loader.cfg = svcs("a2:apps/a2:true")
+	_, err = h.cycle(t, false)
+	mustNoErr(t, err)
+	assertRemoved(t, h, "a")
+	assertState(t, h, state.State{"a2": "/clone/apps/a2"})
+}
+
+func TestRunOnce_ReEnabledServiceNotSweptAndRedecrypted(t *testing.T) {
+	h := newHarness(t, "a:apps/a:true")
+	_, _ = h.cycle(t, false)
+	h.loader.cfg = svcs("a:apps/a:false")
+	_, _ = h.cycle(t, false)
+	assertRemoved(t, h, "a")
+
+	h.dec.removed = nil
+	h.j.reset()
+	h.loader.cfg = svcs("a:apps/a:true")
+	_, err := h.cycle(t, false)
+	mustNoErr(t, err)
+	assertRemoved(t, h)
+	assertJournal(t, h, "decrypt:a", "deploy:/clone/apps/a")
 }

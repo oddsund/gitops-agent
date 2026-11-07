@@ -48,6 +48,10 @@ func (d sopsDecrypter) DecryptServiceSecrets(serviceDir, serviceName string) err
 	return sopsdecrypt.DecryptServiceSecrets(serviceDir, serviceName, d.keyPath, d.baseDir)
 }
 
+func (d sopsDecrypter) RemoveServiceSecrets(serviceName string) error {
+	return sopsdecrypt.RemoveServiceSecrets(serviceName, d.baseDir)
+}
+
 type composeDeployer struct{}
 
 func (composeDeployer) Deploy(dir string) error { return deploy.Deploy(dir) }

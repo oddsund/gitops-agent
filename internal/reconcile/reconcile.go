@@ -41,10 +41,13 @@ type ServiceLoader interface {
 	LoadServices(path string) (*config.ServicesConfig, error)
 }
 
-// Decrypter writes a service's decrypted secrets. The adapter binds the SSH
-// key path and secrets base dir.
+// Decrypter writes and removes a service's decrypted secrets. The adapter
+// binds the SSH key path and secrets base dir.
 type Decrypter interface {
 	DecryptServiceSecrets(serviceDir, serviceName string) error
+	// RemoveServiceSecrets deletes what DecryptServiceSecrets wrote for
+	// serviceName. A file that is already gone is success.
+	RemoveServiceSecrets(serviceName string) error
 }
 
 // Deployer runs docker compose in a service directory.
@@ -216,6 +219,7 @@ func (r *Reconciler) RunOnce(ctx context.Context) (bool, error) {
 	for _, svc := range r.svcCfg.EnabledServices() {
 		desired[svc.Name] = true
 	}
+	tornDown := map[string]bool{}
 	for name, serviceDir := range r.deployed {
 		if desired[name] {
 			continue
@@ -232,6 +236,31 @@ func (r *Reconciler) RunOnce(ctx context.Context) (bool, error) {
 		stateDirty = true
 		r.Tracker.ServiceResult(name, nil)
 		log.Printf("tore down %s (%s)", name, serviceDir)
+		// Only after a successful Down: until then the containers may still
+		// need the env file. A removal failure does not undo the teardown.
+		if err := r.Decrypter.RemoveServiceSecrets(name); err != nil {
+			log.Printf("service %s: removing decrypted secrets: %v", name, err)
+			errs = append(errs, fmt.Errorf("removing secrets for %s: %w", name, err))
+		}
+		tornDown[name] = true
+	}
+
+	// Sweep services that are disabled in the manifest: a file left by an
+	// earlier cycle or a failed removal is retried every cycle. Names come
+	// only from the manifest, never from scanning the secrets directory.
+	for _, svc := range r.svcCfg.Services {
+		if svc.Enabled || tornDown[svc.Name] {
+			continue
+		}
+		// Still deployed means Down failed: the containers may still be
+		// running and need their env file on restart.
+		if _, stillDeployed := r.deployed[svc.Name]; stillDeployed {
+			continue
+		}
+		if err := r.Decrypter.RemoveServiceSecrets(svc.Name); err != nil {
+			log.Printf("service %s: removing decrypted secrets: %v", svc.Name, err)
+			errs = append(errs, fmt.Errorf("removing secrets for %s: %w", svc.Name, err))
+		}
 	}
 
 	var deployedCount, skipped int

@@ -64,3 +64,31 @@ creates a container, not continuously.
 CAUTION: If you run `docker compose up` by hand while the agent is
 stopped, the decrypted file is not there. A service that needs it fails to
 start.
+
+## Removing a service
+
+The agent deletes `/run/gitops-agent/<name>/secrets.env` for a service in
+two cases:
+
+- The agent has just stopped the service's containers because it is no
+  longer enabled, or because it is gone from `services.toml`.
+- The service is in `services.toml` with `enabled = false`. The agent
+  checks this on every cycle. A file that is already gone is not an error.
+
+The agent removes the file only after `docker compose down` succeeds. If
+`down` fails, the containers may still be running, so the file stays and
+the agent tries again on the next cycle. The agent also removes the
+`/run/gitops-agent/<name>` directory, but only if it is empty.
+
+The agent never scans `/run/gitops-agent`. It removes files only for
+service names it knows from `services.toml` or from its own deploy state.
+
+The agent does not remove the file in these cases:
+
+- You delete `secrets.enc.env` from a service that stays enabled. The old
+  `secrets.env` stays until the service is disabled or removed, or until
+  the host reboots. To clear it at once, delete it by hand.
+- You remove a service from `services.toml` and the agent fails to delete
+  the file during that one cycle. The agent logs the error and does not
+  try again for that name. The file is gone at the next reboot or
+  `systemctl stop gitops-agent`.
