@@ -10,10 +10,12 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/oddsund/gitops-agent/internal/config"
 	"github.com/oddsund/gitops-agent/internal/gitsync"
+	"github.com/oddsund/gitops-agent/internal/notify"
 	"github.com/oddsund/gitops-agent/internal/schedule"
 	"github.com/oddsund/gitops-agent/internal/state"
 	"github.com/oddsund/gitops-agent/internal/statusserver"
@@ -56,6 +58,10 @@ type Deployer interface {
 	Down(serviceDir string) error
 }
 
+// Notifier is told the outcome of every cycle. Implementations must not
+// block on I/O and must not fail the caller. Nil means notifications are off.
+type Notifier interface{ Observe(notify.Observation) }
+
 // Config is the subset of the agent config the loop needs. Plain values so
 // tests don't build an AgentConfig.
 type Config struct {
@@ -88,6 +94,10 @@ type Reconciler struct {
 	Now func() time.Time
 	// Log receives the reconciler's log lines. Nil discards.
 	Log *slog.Logger
+	// Notifier hears about each finished cycle from Run (not RunOnce). Nil
+	// disables. Assign it only when non-nil: a typed nil pointer in this
+	// interface would not compare equal to nil.
+	Notifier Notifier
 
 	// State carried across cycles: the last-known-good services manifest
 	// (so a broken commit doesn't stop deploys), the set of services
@@ -95,10 +105,11 @@ type Reconciler struct {
 	// reconcile ran.
 	svcCfg            *config.ServicesConfig
 	deployedOnce      map[string]bool
-	deployed          state.State  // name -> serviceDir, persisted; see internal/state
-	lastFullReconcile time.Time    // zero => first cycle is a full one
-	cycle             int          // RunOnce calls so far; 1 on the first
-	lg                *slog.Logger // r.log() tagged with the current cycle
+	deployed          state.State       // name -> serviceDir, persisted; see internal/state
+	lastFullReconcile time.Time         // zero => first cycle is a full one
+	cycle             int               // RunOnce calls so far; 1 on the first
+	lg                *slog.Logger      // r.log() tagged with the current cycle
+	stage             map[string]string // service -> stage of its current failure; see observation
 }
 
 func (r *Reconciler) log() *slog.Logger {
@@ -123,6 +134,7 @@ func (r *Reconciler) start() {
 		return
 	}
 	r.deployedOnce = make(map[string]bool)
+	r.stage = make(map[string]string)
 	r.deployed = state.Load(r.Config.StatePath, r.log().With("component", "state"))
 }
 
@@ -164,6 +176,12 @@ func (r *Reconciler) Run(ctx context.Context, reload <-chan struct{}) error {
 			if err := statusserver.WriteFile(r.StatusFile, r.Tracker.Snapshot()); err != nil {
 				r.log().Error("writing status file", "path", r.StatusFile, "error", err)
 			}
+		}
+
+		// After the cycle result and the status file are final, so a
+		// notification problem cannot influence either.
+		if r.Notifier != nil {
+			r.notify()
 		}
 
 		select {
@@ -246,9 +264,11 @@ func (r *Reconciler) RunOnce(ctx context.Context) (bool, error) {
 			svcLog.Error("tearing down failed", "path", serviceDir, "error", err)
 			errs = append(errs, fmt.Errorf("tearing down %s: %w", name, err))
 			r.Tracker.ServiceResult(name, err)
+			r.stage[name] = "teardown"
 			continue
 		}
 		delete(r.deployed, name)
+		delete(r.stage, name)
 		delete(r.deployedOnce, name) // a later re-enable must force a fresh deploy
 		stateDirty = true
 		r.Tracker.ServiceResult(name, nil)
@@ -298,6 +318,7 @@ func (r *Reconciler) RunOnce(ctx context.Context) (bool, error) {
 			svcLog.Error("decrypting secrets failed", "error", err)
 			errs = append(errs, fmt.Errorf("decrypting secrets for %s: %w", svc.Name, err))
 			r.Tracker.ServiceResult(svc.Name, err)
+			r.stage[svc.Name] = "decrypt"
 			continue
 		}
 
@@ -306,9 +327,11 @@ func (r *Reconciler) RunOnce(ctx context.Context) (bool, error) {
 			svcLog.Error("deploy failed", "path", serviceDir, "duration", r.now().Sub(start), "error", err)
 			errs = append(errs, fmt.Errorf("deploying %s: %w", svc.Name, err))
 			r.Tracker.ServiceResult(svc.Name, err)
+			r.stage[svc.Name] = "deploy"
 			continue
 		}
 		r.Tracker.ServiceResult(svc.Name, nil)
+		delete(r.stage, svc.Name)
 
 		r.deployedOnce[svc.Name] = true
 		if r.deployed[svc.Name] != serviceDir {
@@ -348,4 +371,51 @@ func (r *Reconciler) serviceNeedsDeploy(res gitsync.Result, svc config.Service) 
 		return true
 	}
 	return changed
+}
+
+// notify hands the finished cycle to the Notifier. It cannot affect the
+// cycle: no return value, and a panic is contained here.
+func (r *Reconciler) notify() {
+	defer func() {
+		if p := recover(); p != nil {
+			r.log().Error("notifier panicked", "panic", fmt.Sprint(p))
+		}
+	}()
+	r.Notifier.Observe(r.observation(r.Tracker.Snapshot()))
+}
+
+// observation turns the tracker snapshot into per-key health. The tracker
+// keeps error strings only, so the failing stage comes from r.stage rather
+// than from parsing error text. A service that was never attempted is not
+// failing and is left out.
+func (r *Reconciler) observation(snap statusserver.Status) notify.Observation {
+	syncErr := snap.LastSyncError
+	if url := r.Config.RepoURL; url != "" {
+		// Belt and braces: the error text is already redacted where it is
+		// created.
+		syncErr = strings.ReplaceAll(syncErr, url, gitsync.RedactURL(url))
+	}
+	obs := notify.Observation{
+		States: []notify.State{{
+			Key:     notify.Key{Kind: notify.KindSync},
+			Failing: snap.LastSyncError != "",
+			Stage:   "sync",
+			Err:     syncErr,
+		}},
+	}
+	if len(snap.CommitHash) >= 12 {
+		obs.Commit = snap.CommitHash[:12]
+	}
+	for _, s := range snap.Services {
+		if s.LastAttempt.IsZero() {
+			continue
+		}
+		obs.States = append(obs.States, notify.State{
+			Key:     notify.Key{Kind: notify.KindService, Name: s.Name},
+			Failing: !s.LastAttemptOK,
+			Stage:   r.stage[s.Name],
+			Err:     s.LastError,
+		})
+	}
+	return obs
 }

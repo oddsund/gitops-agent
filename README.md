@@ -66,7 +66,7 @@ install by hand. To build from source instead:
 |---|---|
 | [How it works](docs/how-it-works.md) | The reconcile cycle, the polling cadence, and the signals |
 | [Install](docs/install.md) | The bootstrap script, install and update, release verification, the systemd units, and migration |
-| [Configuration](docs/configuration.md) | `config.toml`, `services.toml`, and the repository layout |
+| [Configuration](docs/configuration.md) | `config.toml`, `services.toml`, the repository layout, and optional email when a service starts failing or recovers |
 | [Secrets](docs/secrets.md) | sops encryption, and where decrypted files go |
 | [Status page](docs/status-page.md) | The HTTP endpoints and reverse proxies |
 | [Security model](docs/security.md) | The trust boundary and the systemd sandboxing |

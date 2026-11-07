@@ -17,6 +17,7 @@ import (
 
 	"github.com/oddsund/gitops-agent/internal/config"
 	"github.com/oddsund/gitops-agent/internal/gitsync"
+	"github.com/oddsund/gitops-agent/internal/notify"
 	"github.com/oddsund/gitops-agent/internal/reconcile"
 	"github.com/oddsund/gitops-agent/internal/sopsdecrypt"
 	"github.com/oddsund/gitops-agent/internal/statusserver"
@@ -106,8 +107,35 @@ func main() {
 		Tracker:    tracker,
 		StatusFile: statusserver.DefaultStatusFilePath,
 	}
-	if err := r.Run(ctx, reloadCh); err != nil {
-		logger.Error("reconcile loop stopped", "error", err)
+	// Not a plain `var n notify.Notifier`: r.Notifier must stay a true nil
+	// interface when notifications are off or failed to start.
+	var mailer *notify.Service
+	if nc := cfg.Notify; nc.SMTPHost != "" {
+		host, herr := os.Hostname()
+		if herr != nil || host == "" {
+			logger.Warn("cannot determine host name for notifications, using a placeholder", "error", herr)
+			host = "unknown-host"
+		}
+		n, err := notify.New(notifyConfig(nc, host), logger.With("component", "notify"), time.Now)
+		if err != nil {
+			// Not fatal: deploying matters more than mail, and the password
+			// file is host state that can lag behind provisioning.
+			logger.Error("notifications disabled", "error", err)
+		} else {
+			mailer = n
+			r.Notifier = n
+			logger.Info("email notifications enabled", "host", nc.SMTPHost, "port", nc.SMTPPort, "tls", nc.TLS,
+				"recipients", len(nc.To), "min_interval", time.Duration(nc.MinIntervalSeconds)*time.Second)
+		}
+	}
+	runErr := r.Run(ctx, reloadCh)
+	// Explicit rather than deferred: os.Exit below skips defers. This lets a
+	// failure seen in the final cycle still go out, within a bounded wait.
+	if mailer != nil {
+		mailer.Close(5 * time.Second)
+	}
+	if runErr != nil {
+		logger.Error("reconcile loop stopped", "error", runErr)
 		os.Exit(1)
 	}
 	logger.Info("gitops-agent shutting down")
