@@ -10,7 +10,7 @@ import (
 
 func TestHappyPath(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, "{\"tag_name\": \"testVersion\"}")
+		io.WriteString(w, "{\"tag_name\": \"v1.2.3\"}")
 	})
 	server := httptest.NewTestServer(t, handler)
 
@@ -18,12 +18,12 @@ func TestHappyPath(t *testing.T) {
 		HTTPClient: server.Client(),
 	}
 
-	tag, err := latestReleaseTag(config)
+	tag, err := latestReleaseTag(t.Context(), config)
 	if err != nil {
 		t.Fatalf("latestReleaseTag should work with default config")
 	}
 
-	if tag != "testVersion" {
+	if tag != "v1.2.3" {
 		t.Fatalf("latestReleaseTag should fetch tag from testserver, got %s", tag)
 	}
 }
@@ -40,7 +40,7 @@ func TestNon200(t *testing.T) {
 		APIBaseURL: "https://api.test.com",
 	}
 
-	_, err := latestReleaseTag(config)
+	_, err := latestReleaseTag(t.Context(), config)
 	if err == nil {
 		t.Fatalf("latestReleaseTag should return error on non-200 response")
 	}
@@ -66,7 +66,7 @@ func TestMissingTag(t *testing.T) {
 		APIBaseURL: "https://api.test.com",
 	}
 
-	_, err := latestReleaseTag(config)
+	_, err := latestReleaseTag(t.Context(), config)
 	if err == nil {
 		t.Fatalf("latestReleaseTag should return error on missing tag_name in response")
 	}
@@ -92,7 +92,7 @@ func TestEmptyTag(t *testing.T) {
 		APIBaseURL: "https://api.test.com",
 	}
 
-	_, err := latestReleaseTag(config)
+	_, err := latestReleaseTag(t.Context(), config)
 	if err == nil {
 		t.Fatalf("latestReleaseTag should return error on missing tag_name in response")
 	}
@@ -122,7 +122,7 @@ func TestAuthHeaderSetWhenConfigured(t *testing.T) {
 		Token:      "BearerToken",
 	}
 
-	_, err := latestReleaseTag(config)
+	_, err := latestReleaseTag(t.Context(), config)
 	if err == nil {
 		t.Fatalf("latestReleaseTag should return error for this test")
 	}
@@ -143,7 +143,7 @@ func TestNoAuthHeaderSetWhenNotConfigured(t *testing.T) {
 		APIBaseURL: "https://api.test.com",
 	}
 
-	_, err := latestReleaseTag(config)
+	_, err := latestReleaseTag(t.Context(), config)
 	if err == nil {
 		t.Fatalf("latestReleaseTag should return error for this test")
 	}

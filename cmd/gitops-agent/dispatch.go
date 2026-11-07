@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-// subcommands maps a subcommand name to its entry point. Empty for now --
-// ga-tqa.2 (update) and ga-tqa.3 (install) register themselves here.
+// subcommands maps a subcommand name to its entry point. Subcommands register
+// themselves from init() in their own files.
 var subcommands = map[string]func(args []string) error{}
 
 // isSubcommand reports whether args[0] should be dispatched as a
