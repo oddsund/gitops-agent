@@ -41,14 +41,21 @@ next poll. Set `enabled = false`, and the agent stops the service.
 
 ## Install
 
-```
-go install github.com/oddsund/gitops-agent/cmd/gitops-agent@latest
+Download the bootstrap script, read it, then run it:
+
+```bash
+curl --fail --show-error --location --proto '=https' --tlsv1.2 \
+  --output install.sh \
+  https://raw.githubusercontent.com/oddsund/gitops-agent/main/scripts/install.sh
+less install.sh
+bash install.sh --repo-url git@github.com:you/config.git --user pi
 ```
 
-Prebuilt `linux/arm64` binaries are on the [releases page][releases].
-Every release has a checksum and a build provenance attestation.
-[Install](docs/install.md) explains how to verify them and how to install
-the systemd units.
+It installs the latest `linux/arm64` release, checks its checksum and
+build provenance, and sets up the config and the systemd units.
+[Install](docs/install.md) has the details, the limitations, and how to
+install by hand. To build from source instead:
+`go install github.com/oddsund/gitops-agent/cmd/gitops-agent@latest`.
 
 ## Documentation
 
@@ -57,7 +64,7 @@ the systemd units.
 | Document | What it covers |
 |---|---|
 | [How it works](docs/how-it-works.md) | The reconcile cycle, the polling cadence, and the signals |
-| [Install](docs/install.md) | Installation, release verification, and the systemd units |
+| [Install](docs/install.md) | The bootstrap script, install and update, release verification, the systemd units, and migration |
 | [Configuration](docs/configuration.md) | `config.toml`, `services.toml`, and the repository layout |
 | [Secrets](docs/secrets.md) | sops encryption, and where decrypted files go |
 | [Status page](docs/status-page.md) | The HTTP endpoints and reverse proxies |
@@ -67,5 +74,3 @@ the systemd units.
 ## License
 
 MIT. See [LICENSE](LICENSE).
-
-[releases]: https://github.com/oddsund/gitops-agent/releases
