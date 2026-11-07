@@ -30,7 +30,7 @@ func TestFetchVerified_HappyPath(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	res, err := fetchVerified(config, "", tmpDir)
+	res, err := fetchVerified(t.Context(), config, "v1.2.3", tmpDir)
 
 	if err != nil {
 		t.Fatalf("Expected no error for fetching file, got %v", err)
@@ -70,7 +70,7 @@ func TestFetchVerified_ShasumMismatch(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	_, err := fetchVerified(config, "", tmpDir)
+	_, err := fetchVerified(t.Context(), config, "v1.2.3", tmpDir)
 
 	if err == nil {
 		t.Fatalf("Couldn't read file created by fetchVerified: %v", err)
@@ -109,7 +109,7 @@ func TestFetchVerified_MissingShasum(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	_, err := fetchVerified(config, "", tmpDir)
+	_, err := fetchVerified(t.Context(), config, "v1.2.3", tmpDir)
 
 	if err == nil {
 		t.Fatalf("Couldn't read file created by fetchVerified: %v", err)
@@ -139,7 +139,7 @@ func TestFetchVerified_MissingAsset(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	_, err := fetchVerified(config, "", tmpDir)
+	_, err := fetchVerified(t.Context(), config, "v1.2.3", tmpDir)
 
 	if err == nil {
 		t.Fatalf("Couldn't read file created by fetchVerified: %v", err)
@@ -175,7 +175,7 @@ func TestFetchVerified_InvalidChecksumfile(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	_, err := fetchVerified(config, "", tmpDir)
+	_, err := fetchVerified(t.Context(), config, "v1.2.3", tmpDir)
 
 	if err == nil {
 		t.Fatalf("Couldn't read file created by fetchVerified: %v", err)
@@ -211,7 +211,7 @@ func TestFetchVerified_ChecksumTooLong(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	_, err := fetchVerified(config, "", tmpDir)
+	_, err := fetchVerified(t.Context(), config, "v1.2.3", tmpDir)
 
 	if err == nil {
 		t.Fatalf("Couldn't read file created by fetchVerified: %v", err)
