@@ -1,0 +1,4 @@
+[[services]]
+name = "demoapp"
+path = "./services//demoapp/"
+enabled = true

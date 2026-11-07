@@ -13,6 +13,11 @@ on the host. Control it the way you would control that right: branch
 protection, required reviews, restricted push access, or whatever fits
 your setup.
 
+The agent checks that each service path in `services.toml` stays inside the
+clone, but it does not resolve symlinks. A symlink committed to the
+repository can still point outside it. Anyone who can push can already run
+containers, so this check is a guard against mistakes, not a boundary.
+
 ## What the agent does inside that model
 
 The agent cannot fix the trust boundary above. It can fail safe and limit

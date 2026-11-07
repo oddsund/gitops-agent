@@ -6,6 +6,10 @@ package config
 import (
 	"fmt"
 	"log"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"unicode"
 
 	"github.com/BurntSushi/toml"
 )
@@ -172,19 +176,71 @@ func LoadServices(path string) (*ServicesConfig, error) {
 	return &cfg, nil
 }
 
+// serviceNameRE: the name becomes a directory under the secrets tmpfs and
+// a key in the state file, so it must be a single safe path segment.
+var serviceNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
+// composeProjectName mirrors how docker compose names the project when
+// the agent passes -f <dir>/compose.yml and no -p (internal/deploy does
+// neither): the directory basename, lowercased, with every character
+// outside [a-z0-9_-] dropped, then leading '_' and '-' trimmed (compose-go's
+// NormalizeProjectName). This assumes no name:, COMPOSE_PROJECT_NAME or -p
+// override: the agent derives the name from the directory alone. Two services that map to the same name
+// share containers, networks and volumes and tear each other down.
+func composeProjectName(cleanPath string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(filepath.Base(cleanPath)) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '-' {
+			b.WriteRune(r)
+		}
+	}
+	return strings.TrimLeft(b.String(), "_-")
+}
+
+// Validate checks every service and, on success, rewrites each Path to its
+// cleaned form so that Join, gitsync.PathChanged and the status page all see
+// one spelling. Paths are not normalised if validation fails. The path check
+// is lexical: it does not resolve symlinks.
 func (c *ServicesConfig) Validate() error {
-	seen := make(map[string]bool, len(c.Services))
+	names := make(map[string]bool, len(c.Services))
+	paths := make(map[string]string, len(c.Services))
+	projects := make(map[string]string, len(c.Services))
 	for _, s := range c.Services {
 		if s.Name == "" {
 			return fmt.Errorf("service with empty name")
 		}
+		if !serviceNameRE.MatchString(s.Name) {
+			return fmt.Errorf("service %q: name must be 1-64 characters, start with a letter or digit, and contain only letters, digits, '.', '_' and '-'", s.Name)
+		}
 		if s.Path == "" {
 			return fmt.Errorf("service %q: path is required", s.Name)
 		}
-		if seen[s.Name] {
+		if strings.ContainsFunc(s.Path, unicode.IsControl) || !filepath.IsLocal(s.Path) {
+			return fmt.Errorf("service %q: path %q must be relative and stay inside the repository", s.Name, s.Path)
+		}
+		clean := filepath.Clean(s.Path)
+		if clean == "." {
+			return fmt.Errorf("service %q: path %q must name a directory below the repository root", s.Name, s.Path)
+		}
+		if names[s.Name] {
 			return fmt.Errorf("duplicate service name %q", s.Name)
 		}
-		seen[s.Name] = true
+		if owner, ok := paths[clean]; ok {
+			return fmt.Errorf("service %q: path %q duplicates the path of service %q", s.Name, s.Path, owner)
+		}
+		project := composeProjectName(clean)
+		if project == "" {
+			return fmt.Errorf("service %q: path %q: the directory name gives an empty docker compose project name", s.Name, s.Path)
+		}
+		if owner, ok := projects[project]; ok {
+			return fmt.Errorf("service %q: path %q gives docker compose project name %q, which service %q already uses", s.Name, s.Path, project, owner)
+		}
+		names[s.Name] = true
+		paths[clean] = s.Name
+		projects[project] = s.Name
+	}
+	for i := range c.Services {
+		c.Services[i].Path = filepath.Clean(c.Services[i].Path)
 	}
 	return nil
 }

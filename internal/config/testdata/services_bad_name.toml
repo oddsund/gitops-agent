@@ -1,0 +1,4 @@
+[[services]]
+name = "../evil"
+path = "services/evil"
+enabled = true
