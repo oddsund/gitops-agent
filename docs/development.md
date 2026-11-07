@@ -35,6 +35,27 @@ so no host installs or updates to it. To add an architecture, add it to the matr
 `release.yml` and `ci.yml`, to the `case` in `scripts/install.sh` and to `assetNameFor` in
 `internal/selfupdate/config.go`.
 
+## Logging
+
+The agent logs with `log/slog` as `key=value` text on stderr. Under systemd,
+journald adds the timestamp, so the agent leaves its own out when
+`JOURNAL_STREAM` is set.
+
+Every package gets its logger from its caller. A `nil` logger discards the
+output. No package reads `slog.Default()`; only `main` sets it. In a test,
+write to a `bytes.Buffer` through `slog.NewTextHandler` and assert on the
+text.
+
+Use these keys, and no others for the same idea: `service`, `commit`,
+`previous`, `path`, `repo`, `branch`, `duration`, `error`, `cycle`,
+`component`. Pass an error as the `error` attr, not through `%v`.
+
+Levels: `Info` for normal operation, `Warn` when the agent falls back or runs
+degraded, `Error` for a failure, `Debug` for per-poll detail.
+
+Never log decrypted secrets, environment values, a URL with a password, or an
+SMTP password. Pass a repository URL through `gitsync.RedactURL` first.
+
 ## Conventions
 
 [CLAUDE.md](../CLAUDE.md) has the conventions of this repository:

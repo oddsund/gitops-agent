@@ -8,7 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"path/filepath"
 	"time"
 
@@ -86,6 +86,8 @@ type Reconciler struct {
 	// Now defaults to time.Now. Only the full-reconcile timer and
 	// SetNextCycle read it.
 	Now func() time.Time
+	// Log receives the reconciler's log lines. Nil discards.
+	Log *slog.Logger
 
 	// State carried across cycles: the last-known-good services manifest
 	// (so a broken commit doesn't stop deploys), the set of services
@@ -93,8 +95,17 @@ type Reconciler struct {
 	// reconcile ran.
 	svcCfg            *config.ServicesConfig
 	deployedOnce      map[string]bool
-	deployed          state.State // name -> serviceDir, persisted; see internal/state
-	lastFullReconcile time.Time   // zero => first cycle is a full one
+	deployed          state.State  // name -> serviceDir, persisted; see internal/state
+	lastFullReconcile time.Time    // zero => first cycle is a full one
+	cycle             int          // RunOnce calls so far; 1 on the first
+	lg                *slog.Logger // r.log() tagged with the current cycle
+}
+
+func (r *Reconciler) log() *slog.Logger {
+	if r.Log != nil {
+		return r.Log
+	}
+	return slog.New(slog.DiscardHandler)
 }
 
 func (r *Reconciler) now() time.Time {
@@ -112,7 +123,7 @@ func (r *Reconciler) start() {
 		return
 	}
 	r.deployedOnce = make(map[string]bool)
-	r.deployed = state.Load(r.Config.StatePath)
+	r.deployed = state.Load(r.Config.StatePath, r.log().With("component", "state"))
 }
 
 // Run is the reconcile loop. It polls at Config.Idle when idle, drops to
@@ -124,8 +135,8 @@ func (r *Reconciler) Run(ctx context.Context, reload <-chan struct{}) error {
 	window := r.Config.ActiveWindow
 	fullReconcileEvery := r.Config.FullReconcileEvery
 
-	log.Printf("polling %s (branch %s): every %s when idle, %s for %s after a change; full reconcile every %s",
-		r.Config.RepoURL, r.Config.Branch, idle, active, window, fullReconcileEvery)
+	r.log().Info("polling for changes", "repo", gitsync.RedactURL(r.Config.RepoURL), "branch", r.Config.Branch,
+		"idle", idle, "active", active, "active_window", window, "full_reconcile_every", fullReconcileEvery)
 
 	sched := schedule.New(idle, active, window)
 
@@ -134,7 +145,7 @@ func (r *Reconciler) Run(ctx context.Context, reload <-chan struct{}) error {
 	for {
 		changed, err := r.RunOnce(ctx)
 		if err != nil {
-			log.Printf("run failed, will try again next cycle: %v", err)
+			r.log().Error("run failed, will try again next cycle", "cycle", r.cycle, "error", err)
 		}
 		r.Tracker.CycleComplete(err)
 
@@ -142,16 +153,16 @@ func (r *Reconciler) Run(ctx context.Context, reload <-chan struct{}) error {
 		delay, transitioned := sched.Next()
 		if transitioned {
 			if sched.IsActive() {
-				log.Printf("new commits: reconciling every %s for the next %s", active, window)
+				r.log().Info("new commits: reconciling more often", "interval", active, "window", window)
 			} else {
-				log.Printf("quiet for %s, back to polling every %s", window, idle)
+				r.log().Info("quiet, back to the idle cadence", "quiet_for", window, "interval", idle)
 			}
 		}
 		r.Tracker.SetNextCycle(r.now().Add(delay), sched.IsActive())
 
 		if r.StatusFile != "" {
 			if err := statusserver.WriteFile(r.StatusFile, r.Tracker.Snapshot()); err != nil {
-				log.Printf("status: writing %s: %v", r.StatusFile, err)
+				r.log().Error("writing status file", "path", r.StatusFile, "error", err)
 			}
 		}
 
@@ -173,24 +184,28 @@ func (r *Reconciler) Run(ctx context.Context, reload <-chan struct{}) error {
 // would change behaviour.
 func (r *Reconciler) RunOnce(ctx context.Context) (bool, error) {
 	r.start()
+	r.cycle++
+	lg := r.log().With("cycle", r.cycle)
+	r.lg = lg
 
 	r.Tracker.SyncAttempt()
 	res, err := r.Syncer.Sync()
 	if err != nil {
 		r.Tracker.SyncResult("", err)
-		return false, fmt.Errorf("syncing %s: %w", r.Config.RepoURL, err)
+		return false, fmt.Errorf("syncing %s: %w", gitsync.RedactURL(r.Config.RepoURL), err)
 	}
 	r.Tracker.SyncResult(res.After.String(), nil)
 
 	manifestPath := filepath.Join(r.Config.ClonePath, servicesManifest)
 	if loaded, err := r.Services.LoadServices(manifestPath); err != nil {
-		log.Printf("services manifest %s is broken, keeping last-known-good list: %v", manifestPath, err)
+		lg.Warn("services manifest is broken, keeping last-known-good list", "path", manifestPath, "error", err)
 	} else {
 		r.svcCfg = loaded
+		lg.Debug("services manifest loaded", "path", manifestPath, "services", len(loaded.Services), "enabled", len(loaded.EnabledServices()))
 	}
 
 	if r.svcCfg == nil {
-		log.Printf("no valid services manifest loaded yet -- nothing to deploy this cycle")
+		lg.Warn("no valid services manifest loaded yet -- nothing to deploy this cycle")
 		return res.Changed, nil
 	}
 	for _, svc := range r.svcCfg.Services {
@@ -202,7 +217,7 @@ func (r *Reconciler) RunOnce(ctx context.Context) (bool, error) {
 	// alone. A periodic unconditional pass is the cheap way to heal it.
 	fullReconcile := r.now().Sub(r.lastFullReconcile) >= r.Config.FullReconcileEvery
 	if fullReconcile {
-		log.Printf("periodic full reconcile: deploying every enabled service regardless of changes")
+		lg.Info("periodic full reconcile: deploying every enabled service regardless of changes")
 		r.lastFullReconcile = r.now()
 	}
 
@@ -224,9 +239,11 @@ func (r *Reconciler) RunOnce(ctx context.Context) (bool, error) {
 		if desired[name] {
 			continue
 		}
-		log.Printf("service %s: no longer enabled, tearing down (%s)", name, serviceDir)
+		svcLog := lg.With("service", name)
+		svcLog.Info("no longer enabled, tearing down", "path", serviceDir)
 		r.Tracker.ServiceAttempt(name)
 		if err := r.Deployer.Down(serviceDir); err != nil {
+			svcLog.Error("tearing down failed", "path", serviceDir, "error", err)
 			errs = append(errs, fmt.Errorf("tearing down %s: %w", name, err))
 			r.Tracker.ServiceResult(name, err)
 			continue
@@ -235,11 +252,11 @@ func (r *Reconciler) RunOnce(ctx context.Context) (bool, error) {
 		delete(r.deployedOnce, name) // a later re-enable must force a fresh deploy
 		stateDirty = true
 		r.Tracker.ServiceResult(name, nil)
-		log.Printf("tore down %s (%s)", name, serviceDir)
+		svcLog.Info("tore down", "path", serviceDir)
 		// Only after a successful Down: until then the containers may still
 		// need the env file. A removal failure does not undo the teardown.
 		if err := r.Decrypter.RemoveServiceSecrets(name); err != nil {
-			log.Printf("service %s: removing decrypted secrets: %v", name, err)
+			svcLog.Error("removing decrypted secrets failed", "error", err)
 			errs = append(errs, fmt.Errorf("removing secrets for %s: %w", name, err))
 		}
 		tornDown[name] = true
@@ -258,7 +275,7 @@ func (r *Reconciler) RunOnce(ctx context.Context) (bool, error) {
 			continue
 		}
 		if err := r.Decrypter.RemoveServiceSecrets(svc.Name); err != nil {
-			log.Printf("service %s: removing decrypted secrets: %v", svc.Name, err)
+			lg.With("service", svc.Name).Error("removing decrypted secrets failed", "error", err)
 			errs = append(errs, fmt.Errorf("removing secrets for %s: %w", svc.Name, err))
 		}
 	}
@@ -273,16 +290,20 @@ func (r *Reconciler) RunOnce(ctx context.Context) (bool, error) {
 		}
 
 		r.Tracker.ServiceAttempt(svc.Name)
+		start := r.now()
+		svcLog := lg.With("service", svc.Name)
 
-		log.Printf("service %s: decrypting secrets", svc.Name)
+		svcLog.Info("decrypting secrets")
 		if err := r.Decrypter.DecryptServiceSecrets(serviceDir, svc.Name); err != nil {
+			svcLog.Error("decrypting secrets failed", "error", err)
 			errs = append(errs, fmt.Errorf("decrypting secrets for %s: %w", svc.Name, err))
 			r.Tracker.ServiceResult(svc.Name, err)
 			continue
 		}
 
-		log.Printf("service %s: running docker compose up", svc.Name)
+		svcLog.Info("running docker compose up")
 		if err := r.Deployer.Deploy(serviceDir); err != nil {
+			svcLog.Error("deploy failed", "path", serviceDir, "duration", r.now().Sub(start), "error", err)
 			errs = append(errs, fmt.Errorf("deploying %s: %w", svc.Name, err))
 			r.Tracker.ServiceResult(svc.Name, err)
 			continue
@@ -295,11 +316,12 @@ func (r *Reconciler) RunOnce(ctx context.Context) (bool, error) {
 			stateDirty = true
 		}
 		deployedCount++
-		log.Printf("deployed %s (%s)", svc.Name, serviceDir)
+		svcLog.Info("deployed", "path", serviceDir, "duration", r.now().Sub(start))
 	}
 
 	if stateDirty {
 		if err := state.Save(r.Config.StatePath, r.deployed); err != nil {
+			lg.Error("saving deploy state failed", "path", r.Config.StatePath, "error", err)
 			errs = append(errs, fmt.Errorf("saving deploy state %s: %w", r.Config.StatePath, err))
 		}
 	}
@@ -308,7 +330,7 @@ func (r *Reconciler) RunOnce(ctx context.Context) (bool, error) {
 	// runs every 15s and would otherwise bury everything else in the
 	// journal.
 	if skipped > 0 {
-		log.Printf("cycle complete at %s: %d deployed, %d already up to date", res.After.String()[:12], deployedCount, skipped)
+		lg.Info("cycle complete", "commit", gitsync.Short(res.After), "deployed", deployedCount, "up_to_date", skipped)
 	}
 	return res.Changed, errors.Join(errs...)
 }
@@ -322,7 +344,7 @@ func (r *Reconciler) serviceNeedsDeploy(res gitsync.Result, svc config.Service) 
 	}
 	changed, err := r.Changes.PathChanged(res, svc.Path)
 	if err != nil {
-		log.Printf("service %s: couldn't tell whether %s changed, deploying to be safe: %v", svc.Name, svc.Path, err)
+		r.log().With("cycle", r.cycle, "service", svc.Name).Warn("couldn't tell whether the service changed, deploying to be safe", "path", svc.Path, "error", err)
 		return true
 	}
 	return changed

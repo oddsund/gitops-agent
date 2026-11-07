@@ -39,7 +39,7 @@ func TestDecryptServiceSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := DecryptServiceSecrets(dir, "demoapp", "testdata/test_key", secretsBaseDir); err != nil {
+	if err := DecryptServiceSecrets(dir, "demoapp", "testdata/test_key", secretsBaseDir, nil); err != nil {
 		t.Fatalf("DecryptServiceSecrets: %v", err)
 	}
 
@@ -62,7 +62,7 @@ func TestDecryptServiceSecrets_NoEncFile(t *testing.T) {
 	dir := t.TempDir()
 	secretsBaseDir := t.TempDir()
 
-	if err := DecryptServiceSecrets(dir, "demoapp", "testdata/test_key", secretsBaseDir); err != nil {
+	if err := DecryptServiceSecrets(dir, "demoapp", "testdata/test_key", secretsBaseDir, nil); err != nil {
 		t.Fatalf("expected no error when secrets.enc.env is absent, got %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(secretsBaseDir, "demoapp", "secrets.env")); !os.IsNotExist(err) {
@@ -89,7 +89,7 @@ func TestRemoveServiceSecrets_RemovesFileAndDir(t *testing.T) {
 	base := t.TempDir()
 	writeFile(t, filepath.Join(base, "svc", "secrets.env"))
 
-	if err := RemoveServiceSecrets("svc", base); err != nil {
+	if err := RemoveServiceSecrets("svc", base, nil); err != nil {
 		t.Fatal(err)
 	}
 	if exists(filepath.Join(base, "svc")) {
@@ -102,14 +102,14 @@ func TestRemoveServiceSecrets_RemovesFileAndDir(t *testing.T) {
 
 func TestRemoveServiceSecrets_NotExistIsSuccess(t *testing.T) {
 	base := t.TempDir()
-	if err := RemoveServiceSecrets("svc", base); err != nil {
+	if err := RemoveServiceSecrets("svc", base, nil); err != nil {
 		t.Fatalf("no dir: %v", err)
 	}
 
 	if err := os.Mkdir(filepath.Join(base, "svc"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := RemoveServiceSecrets("svc", base); err != nil {
+	if err := RemoveServiceSecrets("svc", base, nil); err != nil {
 		t.Fatalf("empty dir: %v", err)
 	}
 	if exists(filepath.Join(base, "svc")) {
@@ -122,7 +122,7 @@ func TestRemoveServiceSecrets_KeepsDirWithOtherFile(t *testing.T) {
 	writeFile(t, filepath.Join(base, "svc", "secrets.env"))
 	writeFile(t, filepath.Join(base, "svc", "other"))
 
-	if err := RemoveServiceSecrets("svc", base); err != nil {
+	if err := RemoveServiceSecrets("svc", base, nil); err != nil {
 		t.Fatal(err)
 	}
 	if exists(filepath.Join(base, "svc", "secrets.env")) {
@@ -148,11 +148,11 @@ func TestRemoveServiceSecrets_RejectsTraversal(t *testing.T) {
 	}
 
 	for _, name := range []string{"../canary", "..", ".", "", "a/b", "/abs", `a\b`, "a\x00b"} {
-		if err := RemoveServiceSecrets(name, base); err == nil {
+		if err := RemoveServiceSecrets(name, base, nil); err == nil {
 			t.Errorf("name %q: want error, got nil", name)
 		}
 	}
-	if err := RemoveServiceSecrets("svc", ""); err == nil {
+	if err := RemoveServiceSecrets("svc", "", nil); err == nil {
 		t.Error("empty base: want error, got nil")
 	}
 	for _, c := range canaries {
@@ -167,7 +167,7 @@ func TestRemoveServiceSecrets_OtherServiceUntouched(t *testing.T) {
 	writeFile(t, filepath.Join(base, "one", "secrets.env"))
 	writeFile(t, filepath.Join(base, "two", "secrets.env"))
 
-	if err := RemoveServiceSecrets("one", base); err != nil {
+	if err := RemoveServiceSecrets("one", base, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !exists(filepath.Join(base, "two", "secrets.env")) {
@@ -187,7 +187,7 @@ func TestRemoveServiceSecrets_FileRemovalFailure(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
-	if err := RemoveServiceSecrets("svc", base); err == nil {
+	if err := RemoveServiceSecrets("svc", base, nil); err == nil {
 		t.Fatal("want error, got nil")
 	}
 	if !exists(dir) {
@@ -209,7 +209,7 @@ func TestRemoveServiceSecrets_RefusesSymlinkedServiceDir(t *testing.T) {
 		t.Skipf("symlinks unsupported: %v", err)
 	}
 
-	if err := RemoveServiceSecrets("svc", base); err == nil {
+	if err := RemoveServiceSecrets("svc", base, nil); err == nil {
 		t.Fatal("want error, got nil")
 	}
 	if !exists(canary) {

@@ -18,6 +18,11 @@ flag overrides that path.
 [`config.example.toml`](../config.example.toml) is a full annotated
 template.
 
+The `-log-level` flag sets how much the agent logs. Use `debug`, `info`
+(the default), `warn` or `error`. The environment variable
+`GITOPS_AGENT_LOG_LEVEL` sets the same thing; the flag wins. `debug` also
+shows each poll that found nothing new and the output of `docker compose`.
+
 ### `[git]`
 
 | Key | Default | Notes |

@@ -38,7 +38,7 @@ func dispatch(stderr io.Writer, name string, args []string) int {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "usage: gitops-agent [-config path] [-version]")
+	fmt.Fprintln(w, "usage: gitops-agent [-config path] [-log-level level] [-version]")
 
 	names := make([]string, 0, len(subcommands))
 	for name := range subcommands {

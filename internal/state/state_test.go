@@ -7,7 +7,7 @@ import (
 )
 
 func TestLoad_MissingFileReturnsEmpty(t *testing.T) {
-	st := Load(filepath.Join(t.TempDir(), "does-not-exist.json"))
+	st := Load(filepath.Join(t.TempDir(), "does-not-exist.json"), nil)
 	if len(st) != 0 {
 		t.Errorf("Load(missing) = %+v, want empty", st)
 	}
@@ -19,7 +19,7 @@ func TestLoad_CorruptFileReturnsEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	st := Load(path)
+	st := Load(path, nil)
 	if len(st) != 0 {
 		t.Errorf("Load(corrupt) = %+v, want empty", st)
 	}
@@ -33,7 +33,7 @@ func TestSaveThenLoad_RoundTrips(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	got := Load(path)
+	got := Load(path, nil)
 	if len(got) != 1 || got["demoapp"] != want["demoapp"] {
 		t.Errorf("Load after Save = %+v, want %+v", got, want)
 	}
@@ -58,7 +58,7 @@ func TestSave_OverwritesExistingFile(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	got := Load(path)
+	got := Load(path, nil)
 	if len(got) != 1 || got["b"] != "2" {
 		t.Errorf("Load after second Save = %+v, want only {b: 2}", got)
 	}

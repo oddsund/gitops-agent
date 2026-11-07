@@ -1,6 +1,8 @@
 package main
 
 import (
+	"log/slog"
+
 	"github.com/go-git/go-git/v5/plumbing/transport"
 
 	"github.com/oddsund/gitops-agent/internal/config"
@@ -13,7 +15,7 @@ import (
 // These adapters bind configuration (repo URL, clone path, SSH key, secrets
 // directory) that the reconcile interfaces deliberately do not carry. They
 // live here so internal/reconcile never imports deploy or sopsdecrypt. Keep
-// them pure pass-throughs: config.LoadServices, for one, logs its own line.
+// them pure pass-throughs.
 
 var (
 	_ reconcile.Syncer         = gitSyncer{}
@@ -42,17 +44,20 @@ func (manifestLoader) LoadServices(path string) (*config.ServicesConfig, error) 
 	return config.LoadServices(path)
 }
 
-type sopsDecrypter struct{ keyPath, baseDir string }
+type sopsDecrypter struct {
+	keyPath, baseDir string
+	log              *slog.Logger
+}
 
 func (d sopsDecrypter) DecryptServiceSecrets(serviceDir, serviceName string) error {
-	return sopsdecrypt.DecryptServiceSecrets(serviceDir, serviceName, d.keyPath, d.baseDir)
+	return sopsdecrypt.DecryptServiceSecrets(serviceDir, serviceName, d.keyPath, d.baseDir, d.log)
 }
 
 func (d sopsDecrypter) RemoveServiceSecrets(serviceName string) error {
-	return sopsdecrypt.RemoveServiceSecrets(serviceName, d.baseDir)
+	return sopsdecrypt.RemoveServiceSecrets(serviceName, d.baseDir, d.log)
 }
 
-type composeDeployer struct{}
+type composeDeployer struct{ log *slog.Logger }
 
-func (composeDeployer) Deploy(dir string) error { return deploy.Deploy(dir) }
-func (composeDeployer) Down(dir string) error   { return deploy.Down(dir) }
+func (d composeDeployer) Deploy(dir string) error { return deploy.Deploy(dir, d.log) }
+func (d composeDeployer) Down(dir string) error   { return deploy.Down(dir, d.log) }

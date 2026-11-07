@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,6 +35,13 @@ func DecryptFile(encPath, sshKeyPath string) ([]byte, error) {
 	return out, nil
 }
 
+func logger(l *slog.Logger) *slog.Logger {
+	if l != nil {
+		return l
+	}
+	return slog.New(slog.DiscardHandler)
+}
+
 // DefaultSecretsBaseDir is where DecryptServiceSecrets writes plaintext by
 // default: tmpfs (backed by the gitops-agent.service unit's
 // RuntimeDirectory=gitops-agent), not the git worktree. That means a
@@ -49,10 +56,11 @@ const DefaultSecretsBaseDir = "/run/gitops-agent"
 // that don't have any encrypted secrets. serviceName must match the
 // service's `name` in services.toml -- that's also what the service's
 // compose.yml env_file entry must point at, see docs/secrets.md.
-func DecryptServiceSecrets(serviceDir, serviceName, sshKeyPath, secretsBaseDir string) error {
+func DecryptServiceSecrets(serviceDir, serviceName, sshKeyPath, secretsBaseDir string, log *slog.Logger) error {
+	l := logger(log).With("service", serviceName)
 	encPath := filepath.Join(serviceDir, "secrets.enc.env")
 	if _, err := os.Stat(encPath); errors.Is(err, os.ErrNotExist) {
-		log.Printf("sopsdecrypt: no secrets.enc.env in %s, nothing to decrypt (not an error, just a quiet service)", serviceDir)
+		l.Info("no secrets.enc.env, nothing to decrypt (not an error, just a quiet service)", "path", serviceDir)
 		return nil
 	} else if err != nil {
 		return fmt.Errorf("checking %s: %w", encPath, err)
@@ -71,7 +79,7 @@ func DecryptServiceSecrets(serviceDir, serviceName, sshKeyPath, secretsBaseDir s
 	if err := os.WriteFile(outPath, plaintext, 0o600); err != nil {
 		return fmt.Errorf("writing %s: %w", outPath, err)
 	}
-	log.Printf("sopsdecrypt: wrote %s", outPath)
+	l.Info("wrote decrypted secrets", "path", outPath)
 	return nil
 }
 
@@ -82,7 +90,8 @@ func DecryptServiceSecrets(serviceDir, serviceName, sshKeyPath, secretsBaseDir s
 // delete. The service name is validated here, independently of
 // internal/config, because this function deletes files and must not be
 // steerable out of secretsBaseDir by a hostile name.
-func RemoveServiceSecrets(serviceName, secretsBaseDir string) error {
+func RemoveServiceSecrets(serviceName, secretsBaseDir string, log *slog.Logger) error {
+	l := logger(log).With("service", serviceName)
 	if serviceName == "" || serviceName == "." || serviceName == ".." ||
 		strings.ContainsAny(serviceName, "/\\\x00") ||
 		!filepath.IsLocal(serviceName) ||
@@ -136,7 +145,7 @@ func RemoveServiceSecrets(serviceName, secretsBaseDir string) error {
 	// Silent when the file was already absent so the per-cycle sweep for
 	// disabled services logs nothing in the steady state.
 	if removed {
-		log.Printf("sopsdecrypt: removed %s", file)
+		l.Info("removed decrypted secrets", "path", file)
 	}
 	return nil
 }
