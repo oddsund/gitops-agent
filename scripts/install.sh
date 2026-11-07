@@ -151,8 +151,8 @@ log "Latest release: ${tag}"
 
 # Re-running this script is the documented migration and re-provision path.
 # Skipping the download when the installed binary already is the latest tag
-# avoids replacing a good binary and avoids a stale installed-version file
-# (install never overwrites it). It only executes the already-installed,
+# avoids replacing a good binary (gitops-agent install refreshes
+# installed-version either way). It only executes the already-installed,
 # root-owned binary.
 skip_download=0
 if [ -x "$BIN_PATH" ]; then

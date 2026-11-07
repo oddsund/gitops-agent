@@ -190,9 +190,16 @@ gitops-agent install --repo-url URL [--user NAME] [--ssh-key PATH] [--clone-path
   Thus once a config exists, it ignores `--repo-url`, `--ssh-key` and
   `--clone-path`. It reads `ReadWritePaths=` for the unit back from the
   config on disk.
-- It writes `/etc/gitops-agent/installed-version` only if the file does not
-  exist, and only when the binary is a release build (`vX.Y.Z`). After
-  that, `update` owns the file.
+- It writes `/etc/gitops-agent/installed-version` on every run, so the
+  file always names the binary on disk: it creates the file, or replaces a
+  stale value (also when the installed binary is older). It does this only
+  when the running binary is a release build (`vX.Y.Z`) and is the
+  installed `/usr/local/bin/gitops-agent`. A `dev` or `git describe` build,
+  or a copy run from another directory, leaves the file alone. `update`
+  writes the same file after it swaps the binary. If you run
+  `./gitops-agent install` from another directory, the file is not
+  written. Rerun `/usr/local/bin/gitops-agent install` after copying the
+  binary.
 - It writes three units. See [The units](#the-units).
 - It runs these systemd steps, in order: `daemon-reload`;
   `enable gitops-agent`; restart `gitops-agent` only if its unit file
@@ -334,8 +341,9 @@ config at `/etc/gitops-agent/config.toml`. These paths are fixed.
 binary. A plain `go build` reports `dev`. So does
 `go install ...@latest`.
 
-The version file `/etc/gitops-agent/installed-version` holds the tag that
-`update` last installed. Other tools may read it. Its format is `vX.Y.Z`
+The version file `/etc/gitops-agent/installed-version` holds the tag of
+the binary installed at `/usr/local/bin/gitops-agent`. `update` and
+`install` both write it. Other tools may read it. Its format is `vX.Y.Z`
 and a newline.
 
 ## Limitations
@@ -405,10 +413,11 @@ Replace `pi` with the user that runs the agent. This happens:
   `/usr/local/bin/gitops-agent update` and has no `Environment=` line.
 - The agent restarts only if its unit file changed, systemd reported
   `NeedDaemonReload=yes` for it, or it was not running. The timer restarts only if the timer file changed.
-- `/etc/gitops-agent/installed-version` is not touched. Its format has not
-  changed.
+- `/etc/gitops-agent/installed-version` is refreshed to the installed
+  binary's version if it differs. Its format has not changed.
 - If the binary is already the latest release, the script skips the
-  download and does not re-verify the installed binary.
+  download and does not re-verify the installed binary. The version file is
+  still refreshed.
 - If the old install left `/usr/local/bin/gitops-agent` owned by a user
   other than root, or writable by group or others, `gitops-agent install`
   refuses to continue. Fix the owner and mode, then run the script again.

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	gitopsagent "github.com/oddsund/gitops-agent"
 	"github.com/oddsund/gitops-agent/internal/cmdrun"
@@ -129,8 +130,19 @@ func goldenService(t *testing.T) string {
 	return mustRead(t, "testdata/gitops-agent.service.golden")
 }
 
+// asInstalledBinary writes a fake binary at Root/usr/local/bin/gitops-agent
+// and makes it "the running executable".
+func asInstalledBinary(t *testing.T, cfg *Config) string {
+	t.Helper()
+	bin := rootPath(*cfg, binPath)
+	mustWrite(t, bin, "x", 0o755)
+	cfg.Executable = func() (string, error) { return bin, nil }
+	return bin
+}
+
 func TestInstall_FreshHost(t *testing.T) {
 	cfg, fake, logs := newTestConfig(t)
+	asInstalledBinary(t, &cfg)
 	active := false
 	fake.Func = fakeSystemd(&active)
 
@@ -185,7 +197,7 @@ func TestInstall_FreshHost(t *testing.T) {
 	if got := systemctlCalls(t, fake); !equalStrings(got, want) {
 		t.Errorf("calls = %v, want %v", got, want)
 	}
-	for _, sub := range []string{"wrote", "restarting gitops-agent", "WARNING"} {
+	for _, sub := range []string{"wrote", "restarting gitops-agent"} {
 		if !logContains(*logs, sub) {
 			t.Errorf("log lacks %q: %v", sub, *logs)
 		}
@@ -209,6 +221,7 @@ func snap(t *testing.T, path string) snapshot {
 
 func TestInstall_Idempotent(t *testing.T) {
 	cfg, fake, logs := newTestConfig(t)
+	asInstalledBinary(t, &cfg)
 	active := false
 	fake.Func = fakeSystemd(&active)
 	files := []string{configPath, svcPath, updPath, timerPath, versionFilePath}
@@ -259,6 +272,7 @@ func TestInstall_Idempotent(t *testing.T) {
 
 func TestInstall_ExistingConfigWins(t *testing.T) {
 	cfg, fake, _ := newTestConfig(t)
+	asInstalledBinary(t, &cfg)
 	active := true
 	fake.Func = fakeSystemd(&active)
 	existing := `[git]
@@ -485,35 +499,108 @@ ssh_key_path = "/k"
 func TestInstall_VersionFile(t *testing.T) {
 	cases := []struct {
 		name, version, existing string
+		runFrom                 string // installed, elsewhere, nobin, symlink, error
 		wantFile                string // "" means absent
 		wantLog                 string
+		wantErr                 string
+		existingIsDir           bool
+		wantKeepMtime           bool
 	}{
-		{"empty", "", "", "", "version is"},
-		{"dev", "dev", "", "", "version is"},
-		{"release", "v1.2.3", "", "v1.2.3\n", "wrote"},
-		{"existing", "v1.2.3", "v1.0.0\n", "v1.0.0\n", "leaving it as is"},
-		{"describe", "v1.2.3-5-gabc1234", "", "", "not a release tag"},
+		{"absent", "v1.2.3", "", "installed", "v1.2.3\n", "wrote", "", false, false},
+		{"stale", "v1.2.3", "v1.0.0\n", "installed", "v1.2.3\n", "updated", "", false, false},
+		{"stale garbage", "v1.2.3", "gitops-agent-v1.5.0\n", "installed", "v1.2.3\n", "updated", "", false, false},
+		{"equal", "v1.2.3", "v1.2.3\n", "installed", "v1.2.3\n", "already records", "", false, true},
+		{"downgrade", "v1.0.0", "v1.2.3\n", "installed", "v1.0.0\n", "updated", "", false, false},
+		{"dev", "dev", "v1.0.0\n", "installed", "v1.0.0\n", "version is", "", false, false},
+		{"empty", "", "", "installed", "", "version is", "", false, false},
+		{"describe", "v1.2.3-5-gabc1234", "v1.0.0\n", "installed", "v1.0.0\n", "not a release tag", "", false, false},
+		{"elsewhere", "v1.2.3", "v1.0.0\n", "elsewhere", "v1.0.0\n", "running binary is not", "", false, false},
+		{"elsewhere, absent", "v1.2.3", "", "elsewhere", "", "running binary is not", "", false, false},
+		{"no installed bin", "v1.2.3", "", "nobin", "", "running binary is not", "", false, false},
+		{"symlinked exe", "v1.2.3", "v1.0.0\n", "symlink", "v1.2.3\n", "updated", "", false, false},
+		{"write failure", "v1.2.3", "", "installed", "", "", "installed-version", true, false},
+		{"executable error", "v1.2.3", "", "error", "", "finding the running binary", "", false, false},
+		{"missing exe", "v1.2.3", "v1.0.0\n", "missing", "v1.0.0\n", "not writing", "", false, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg, _, logs := newTestConfig(t)
+			cfg, fake, logs := newTestConfig(t)
 			cfg.Version = tc.version
 			vf := rootPath(cfg, versionFilePath)
-			if tc.existing != "" {
-				mustWrite(t, vf, tc.existing, 0o644)
+			other := filepath.Join(t.TempDir(), "other")
+			switch tc.runFrom {
+			case "installed":
+				asInstalledBinary(t, &cfg)
+			case "elsewhere":
+				asInstalledBinary(t, &cfg)
+				mustWrite(t, other, "y", 0o755)
+				cfg.Executable = func() (string, error) { return other, nil }
+			case "nobin":
+				mustWrite(t, other, "y", 0o755)
+				cfg.Executable = func() (string, error) { return other, nil }
+			case "symlink":
+				bin := asInstalledBinary(t, &cfg)
+				link := filepath.Join(t.TempDir(), "link")
+				if err := os.Symlink(bin, link); err != nil {
+					t.Fatal(err)
+				}
+				cfg.Executable = func() (string, error) { return link, nil }
+			case "missing":
+				asInstalledBinary(t, &cfg)
+				cfg.Executable = func() (string, error) { return filepath.Join(t.TempDir(), "gone"), nil }
+			case "error":
+				cfg.Executable = func() (string, error) { return "", errors.New("boom") }
 			}
-			if err := Install(context.Background(), cfg); err != nil {
+			oldMtime := time.Unix(1_000_000_000, 0)
+			switch {
+			case tc.existingIsDir:
+				// A directory in place of the file fails for root and
+				// non-root alike, unlike chmod tricks.
+				if err := os.MkdirAll(vf, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			case tc.existing != "":
+				mustWrite(t, vf, tc.existing, 0o644)
+				if err := os.Chtimes(vf, oldMtime, oldMtime); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := Install(context.Background(), cfg)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want containing %q", err, tc.wantErr)
+				}
+				if got := systemctlCalls(t, fake); len(got) != 0 {
+					t.Errorf("systemctl called after failure: %v", got)
+				}
+				return
+			}
+			if err != nil {
 				t.Fatal(err)
 			}
-			b, err := os.ReadFile(vf)
+			b, rerr := os.ReadFile(vf)
 			switch {
-			case tc.wantFile == "" && err == nil:
+			case tc.wantFile == "" && rerr == nil:
 				t.Errorf("version file written: %q", b)
 			case tc.wantFile != "" && string(b) != tc.wantFile:
-				t.Errorf("version file = %q (%v), want %q", b, err, tc.wantFile)
+				t.Errorf("version file = %q (%v), want %q", b, rerr, tc.wantFile)
+			}
+			if tc.wantFile != "" && tc.existing == "" || tc.wantLog == "updated" {
+				if fi, err := os.Stat(vf); err != nil || fi.Mode().Perm() != 0o644 {
+					t.Errorf("version file mode: %v, %v", fi, err)
+				}
+			}
+			if tc.wantKeepMtime {
+				fi, err := os.Stat(vf)
+				if err != nil || !fi.ModTime().Equal(oldMtime) {
+					t.Errorf("mtime changed: %v, %v", fi, err)
+				}
 			}
 			if !logContains(*logs, tc.wantLog) {
 				t.Errorf("log lacks %q: %v", tc.wantLog, *logs)
+			}
+			if tc.runFrom == "nobin" && !logContains(*logs, "WARNING") {
+				t.Errorf("no binary warning: %v", *logs)
 			}
 		})
 	}
