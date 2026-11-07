@@ -121,11 +121,13 @@ for a in "$@"; do
 done
 
 [ "$(uname -s)" = Linux ] || die "gitops-agent releases are published for Linux only; this host is $(uname -s)"
-# Adding amd64 later is one new case line plus the release workflow; do not
-# guess an asset name that is not published.
+# An unmapped architecture must not guess an asset name that is not
+# published. Keep this list in step with the release workflow matrix and
+# assetNameFor in internal/selfupdate/config.go.
 case "$(uname -m)" in
 aarch64 | arm64) asset_name=gitops-agent-linux-arm64 ;;
-*) die "gitops-agent releases are published for linux/arm64 only; this host is $(uname -m)" ;;
+x86_64 | amd64) asset_name=gitops-agent-linux-amd64 ;;
+*) die "gitops-agent releases are published for linux/arm64 and linux/amd64 only; this host is $(uname -m)" ;;
 esac
 
 # An array, not a string, because of the IFS trap. Download and verification

@@ -6,7 +6,7 @@ systemd units. Read the script before you run it.
 
 ## Before you start
 
-- A Linux arm64 host with systemd.
+- A Linux host (arm64 or amd64) with systemd.
 - Docker with the compose plugin.
 - A user that will run the agent. The user must be in the `docker` group.
   `gitops-agent install` does not add the user to the group.
@@ -46,7 +46,8 @@ proceed on the checksum alone,
 The script does these steps, in order:
 
 1. It finds the latest release tag.
-2. It downloads `gitops-agent-linux-arm64` and its `.sha256` file, with a
+2. It downloads the binary for your architecture (`gitops-agent-linux-arm64` or
+   `gitops-agent-linux-amd64`) and its `.sha256` file, with a
    progress meter.
 3. It checks the checksum of the download.
 4. It stages the binary as root, next to its final path.
@@ -62,7 +63,7 @@ script logs that.
 
 Also note:
 
-- On a host that is not Linux arm64, the script stops with an error.
+- On a host that is not Linux arm64 or Linux amd64, the script stops with an error.
 - If `/usr/local/bin/gitops-agent` already is the latest release, the
   script skips the download and goes straight to `gitops-agent install`.
   It logs `(the installed binary was not re-verified)`: the script trusts
@@ -85,18 +86,25 @@ Also note:
 
 If you do not want to run the script, do its steps yourself. Every
 release publishes the binary, a `.sha256` checksum file, and a
-[build provenance attestation][attestations]. Prebuilt binaries are on the
-[releases page][releases].
+[build provenance attestation][attestations]. Each release has one binary
+per architecture, `gitops-agent-linux-arm64` and `gitops-agent-linux-amd64`,
+each with its own `.sha256` file and attestation. Prebuilt binaries are on
+the [releases page][releases].
 
 ```bash
-curl --fail --show-error --location -O https://github.com/oddsund/gitops-agent/releases/latest/download/gitops-agent-linux-arm64
-curl --fail --show-error --location -O https://github.com/oddsund/gitops-agent/releases/latest/download/gitops-agent-linux-arm64.sha256
-sha256sum -c gitops-agent-linux-arm64.sha256
-gh attestation verify gitops-agent-linux-arm64 -R oddsund/gitops-agent \
+case "$(uname -m)" in
+aarch64 | arm64) ASSET=gitops-agent-linux-arm64 ;;
+x86_64 | amd64) ASSET=gitops-agent-linux-amd64 ;;
+*) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+curl --fail --show-error --location -O "https://github.com/oddsund/gitops-agent/releases/latest/download/${ASSET}"
+curl --fail --show-error --location -O "https://github.com/oddsund/gitops-agent/releases/latest/download/${ASSET}.sha256"
+sha256sum -c "${ASSET}.sha256"
+gh attestation verify "${ASSET}" -R oddsund/gitops-agent \
   --signer-workflow oddsund/gitops-agent/.github/workflows/release.yml \
   --source-ref refs/tags/vX.Y.Z \
   --deny-self-hosted-runners
-sudo install -o root -g root -m 0755 gitops-agent-linux-arm64 /usr/local/bin/gitops-agent
+sudo install -o root -g root -m 0755 "${ASSET}" /usr/local/bin/gitops-agent
 sudo gitops-agent install --repo-url git@github.com:you/config.git --user pi
 ```
 
@@ -117,8 +125,8 @@ go install github.com/oddsund/gitops-agent/cmd/gitops-agent@latest
 
 A source build reports `dev` as its version. `gitops-agent install` does
 not record a version for it. `gitops-agent update` treats it as out of
-date and replaces it with the latest release. `update` has a release asset
-for linux/arm64 only (see [Limitations](#limitations)).
+date and replaces it with the latest release. `update` picks the release asset
+for the architecture it runs on: linux/arm64 or linux/amd64.
 
 ## What gets verified
 
@@ -332,13 +340,11 @@ and a newline.
 
 ## Limitations
 
-- Releases are built for linux/arm64 only. `install.sh` stops with an error
-  on any other platform. `gitops-agent update` looks for the arm64 asset on
-  arm64 hosts and for an asset that is not published on amd64, so on amd64
-  it fails with a download error. If you build from source on another
+- Releases are built for linux/arm64 and linux/amd64. `install.sh` stops with an error
+  on any other platform or architecture, and `gitops-agent update` fails with a clear
+  error on a GOARCH that has no release asset. If you build from source for another
   platform, turn the timer off:
-  `sudo systemctl disable --now gitops-agent-update.timer`. Publishing
-  amd64 releases is tracked in the issue tracker.
+  `sudo systemctl disable --now gitops-agent-update.timer`.
 - Private forks are not supported. `GITOPS_AGENT_REPO` can point at a
   public fork that publishes the same asset names and attestations. The
   GitHub token is for API rate limits only. The download is always
