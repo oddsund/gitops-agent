@@ -75,9 +75,16 @@ enabled = false
 
 | Key | Notes |
 |---|---|
-| `name` | Required. It must not be empty, and it must be unique in the file. The agent also uses this name for the tmpfs secrets directory (see [Secrets](secrets.md)) and for the state file. |
-| `path` | Required. The directory that holds `compose.yml` for this service, and `secrets.enc.env` if the service has secrets. The path is relative to the root of the repository. |
+| `name` | Required. 1 to 64 characters: letters, digits, `.`, `_` and `-`, starting with a letter or digit. It must be unique in the file. The agent uses this name as a directory name for the tmpfs secrets directory (see [Secrets](secrets.md)) and as a key in the state file, so it must be a single safe segment. A name like `../x` or `a/b` is rejected. |
+| `path` | Required. The directory that holds `compose.yml` for this service, and `secrets.enc.env` if the service has secrets. The path is relative to the root of the repository and must stay inside it. Absolute paths, paths that climb out with `..`, and the repository root itself are rejected. Two services must not share a directory: `a`, `./a` and `a/` count as the same path. Two services must also not end in the same directory name when docker compose lowercases it and drops characters other than letters, digits, `_` and `-`: `a/app`, `b/app` and `b/App` would share one compose project. The agent takes the compose project name from the directory alone, so this rule assumes no `name:` key, `COMPOSE_PROJECT_NAME` or `-p` override. Leading `_` and `-` are dropped from that name, and a directory name that leaves nothing, such as `___`, is rejected. Control characters are rejected. The agent stores the path in its cleaned form. |
 | `enabled` | Whether the service must run. `false`, or a removed `[[services]]` block, stops the service on the next cycle. |
+
+If a rule fails, the agent rejects the whole file. It logs
+`services manifest ... is broken, keeping last-known-good list` with the
+reason and, where there is one, the service name, and keeps using the last valid manifest. On a
+fresh start there is no earlier manifest, so nothing is deployed until the
+file is fixed. The agent checks the text of the path only. It does not
+follow symlinks (see [Security](security.md)).
 
 ## Repository layout
 
