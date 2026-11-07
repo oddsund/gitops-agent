@@ -8,9 +8,8 @@ Requires=docker.service
 Type=simple
 # Runs as the same user whose SSH key is configured under [sops].ssh_key_path
 # in config.toml -- that user must be a member of the "docker" group so it
-# can talk to the docker socket without root. Your provisioning tooling
-# substitutes this for the actual installing user; "gitops-agent" here is
-# just a placeholder.
+# can talk to the docker socket without root. `gitops-agent install`
+# substitutes this from --user; "gitops-agent" here is just a placeholder.
 User=gitops-agent
 ExecStart=/usr/local/bin/gitops-agent -config /etc/gitops-agent/config.toml
 # The reconcile loop is meant to run forever; if it ever exits cleanly,
@@ -66,9 +65,9 @@ SystemCallErrorNumber=EPERM
 # ProtectSystem=strict makes the whole filesystem read-only outside
 # /dev, /proc and /sys; gitsync writes into the clone (and sops decrypts
 # there transiently -- see internal/sopsdecrypt) so it needs an explicit
-# carve-out. This path is host-specific ([git].clone_path in config.toml),
-# so your provisioning tooling substitutes it the same way it substitutes
-# User= above; the placeholder here matches config.example.toml's default.
+# carve-out. This path is host-specific, so `gitops-agent install`
+# substitutes the [git].clone_path of the config.toml on disk; the
+# placeholder here matches config.example.toml's default.
 # ProtectHome=read-only would otherwise win for a clone_path that happens
 # to live under the service user's home directory -- but ReadWritePaths=
 # takes precedence over both ProtectHome= and ProtectSystem= regardless of
