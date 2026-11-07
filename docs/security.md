@@ -48,10 +48,14 @@ First, the checksum. The binary must match the `.sha256` file of the same
 release. This catches a corrupted download.
 
 Second, if `gh` is on the host, the build provenance.
-`gh attestation verify` checks that a GitHub Actions workflow in this
-repository built the binary. It does not pin a particular workflow file or
-tag. This is still the stronger check. It runs by default. A host
-that does not want it can opt out; see [Install](install.md).
+`gh attestation verify` checks that the workflow
+`.github/workflows/release.yml` in this repository built the binary, that
+it ran for the release tag being installed (`refs/tags/vX.Y.Z`), and that
+it ran on a GitHub-hosted runner. An attestation from any other workflow,
+branch or tag in the repository is rejected. This is the stronger check.
+It runs by default. A host that does not want it can opt out; see
+[Install](install.md). If `GITOPS_AGENT_REPO` points at a fork, the fork's
+own `release.yml` must sign the release; you trust that fork's workflow.
 
 If a check fails, the old binary stays in place.
 

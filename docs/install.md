@@ -92,16 +92,22 @@ release publishes the binary, a `.sha256` checksum file, and a
 curl --fail --show-error --location -O https://github.com/oddsund/gitops-agent/releases/latest/download/gitops-agent-linux-arm64
 curl --fail --show-error --location -O https://github.com/oddsund/gitops-agent/releases/latest/download/gitops-agent-linux-arm64.sha256
 sha256sum -c gitops-agent-linux-arm64.sha256
-gh attestation verify gitops-agent-linux-arm64 -R oddsund/gitops-agent
+gh attestation verify gitops-agent-linux-arm64 -R oddsund/gitops-agent \
+  --signer-workflow oddsund/gitops-agent/.github/workflows/release.yml \
+  --source-ref refs/tags/vX.Y.Z \
+  --deny-self-hosted-runners
 sudo install -o root -g root -m 0755 gitops-agent-linux-arm64 /usr/local/bin/gitops-agent
 sudo gitops-agent install --repo-url git@github.com:you/config.git --user pi
 ```
 
 The two checks prove different things. The checksum proves only that the
-download is not corrupted. The attestation proves that a GitHub Actions
-workflow in this repository built the file. It does not pin a particular
-workflow file or tag: the check passes for any workflow run in that
-repository. If you set `GITOPS_AGENT_REPO` to a fork, you trust the fork.
+download is not corrupted. The attestation proves that
+`.github/workflows/release.yml` in this repository built the file, from the
+release tag, on a GitHub-hosted runner. Replace `vX.Y.Z` in the command
+above with the tag of the release you downloaded (`releases/latest` points
+at it; the tag is on the release page). If you set `GITOPS_AGENT_REPO` to a
+fork, you trust the fork's `release.yml`, and the fork must publish
+attestations from that file.
 
 ### From source
 
@@ -124,7 +130,8 @@ file that `gh` checks is the file that gets installed.
 - Checksum, always. The tool hashes the binary (SHA-256) and compares the
   hash with the `.sha256` file of the same release.
 - Build provenance. The tool runs
-  `gh attestation verify <file> -R oddsund/gitops-agent`. It does this only
+  `gh attestation verify <file> -R oddsund/gitops-agent --signer-workflow oddsund/gitops-agent/.github/workflows/release.yml --source-ref refs/tags/<tag> --deny-self-hosted-runners`
+  (the repository and tag are filled in at run time). It does this only
   if `gh` is on the PATH of the host and `GITOPS_AGENT_SKIP_ATTESTATION` is
   not `1`.
 
@@ -336,6 +343,13 @@ and a newline.
   public fork that publishes the same asset names and attestations. The
   GitHub token is for API rate limits only. The download is always
   anonymous, so a private repository fails with a 404.
+- Provenance checking needs a recent `gh` (>= 2.68.0). Distribution
+  packages are often older and may lack `gh attestation` entirely; use the
+  [upstream apt repository](https://github.com/cli/cli/blob/trunk/docs/install_linux.md).
+  With an older `gh` the check fails with an unknown flag error and the
+  install or update stops; upgrade `gh` or set
+  `GITOPS_AGENT_SKIP_ATTESTATION=1`. A fork that builds on self-hosted
+  runners fails the check.
 - Only plain release tags are installed: `vX.Y.Z`. Pre-release tags such as
   `v1.2.3-rc1` are never installed. GitHub's "latest release" skips
   pre-releases and drafts, and the tag check rejects anything else.
