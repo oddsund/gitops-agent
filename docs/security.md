@@ -23,6 +23,19 @@ containers, so this check is a guard against mistakes, not a boundary.
 The agent cannot fix the trust boundary above. It can fail safe and limit
 unrelated risk.
 
+### Email notifications
+
+`[notify]` is configured only in the host's `config.toml`. The repository
+cannot change who gets mail, which server the agent talks to, or whether
+the feature is on. Text that comes from the repository (service names) or
+from docker (error text) is put in the mail body only after control
+characters are removed, and is never put in a header without that cleaning.
+Error text is left out unless `include_error` is on. The password is read
+once from `password_file`, which the agent refuses to use if group or
+others can read it, and the agent never logs it. The agent logs in only
+over TLS and verifies the server certificate; there is no option to turn
+verification off.
+
 ### Secrets stay in tmpfs
 
 Decrypted secrets live only under the runtime directory that the systemd

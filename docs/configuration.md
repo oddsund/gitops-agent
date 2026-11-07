@@ -53,10 +53,64 @@ shows each poll that found nothing new and the output of `docker compose`.
 |---|---|---|
 | `listen_addr` | `127.0.0.1:9090` | The address that the status server binds. It is loopback-only by default. See [Status page](status-page.md). |
 
+### `[notify]` — optional section, sends email
+
+The agent can send a plain email when a service starts failing and when it
+recovers. See [Notifications](#notifications) for how it behaves. The
+section is off unless `smtp_host` is set. With `smtp_host` empty or
+missing, the agent sends nothing and logs nothing about it.
+
+| Key | Default | Notes |
+|---|---|---|
+| `smtp_host` | *(empty: off)* | The mail server, as a host name or IP address, without a port. |
+| `smtp_port` | `587` | `465` when `tls = "implicit"`, `25` when `tls = "none"`. |
+| `tls` | `"starttls"` | `"starttls"` starts in clear text and upgrades. The agent fails the send if the server does not offer the upgrade. `"implicit"` is TLS from the first byte (usually port 465). `"none"` is for a relay on this machine only: the agent rejects it unless `smtp_host` is `localhost` or a loopback IP address. |
+| `from` | *(required)* | The sender address, for example `gitops-agent@example.org` or `GitOps <gitops-agent@example.org>`. |
+| `to` | *(required)* | A list of 1 to 10 recipient addresses. |
+| `username` | *(empty: no login)* | The SMTP login. When set, `password_file` is required, and so is `tls = "starttls"` or `"implicit"`. The agent never sends a password without TLS. |
+| `password_file` | *(empty)* | Absolute path of a file that holds the password on one line. See below for who owns it. |
+| `min_interval_seconds` | `3600` | The shortest time between two "failing" emails for the same service. It protects your inbox if a service keeps flapping. A recovery email is never held back. |
+| `include_error` | `false` | Add the first line of the error (at most 200 characters) to the email. Read the warning below before you turn it on. |
+| `status_url` | *(empty)* | The address of your [status page](status-page.md). When set, the email contains it as a link. It must be `http` or `https` and must not contain a user name or password. |
+
+`config.toml` is world-readable (mode `0644`), so the password never goes
+in it. Put it in its own file instead:
+
+```
+sudo install -m 600 -o gitops-agent -g gitops-agent /dev/null /etc/gitops-agent/smtp-password
+sudo sh -c 'cat > /etc/gitops-agent/smtp-password'   # type the password, press Ctrl-D
+```
+
+The file must belong to the user that runs the agent (`User=` in the
+systemd unit), because the agent does not run as root. It must be a
+regular file with mode `0600`. The agent reads it once at startup. If the
+file is missing, is not a regular file, or is readable by group or others,
+the agent logs an error, keeps deploying, and sends no email until you fix
+the file and restart it. The agent never writes the password to the log.
+
+`include_error` is off by default for a reason. Error text from
+`docker compose` can quote part of a line from a decrypted `secrets.env`
+file. With `include_error = true`, that text can leave the host in an email
+that other systems store and forward. Turn it on only if you trust the
+route to your mailbox.
+
+Example:
+
+```toml
+[notify]
+smtp_host = "smtp.example.org"
+tls = "starttls"
+from = "gitops-agent@example.org"
+to = ["you@example.org"]
+username = "gitops-agent@example.org"
+password_file = "/etc/gitops-agent/smtp-password"
+status_url = "https://status.example.org/"
+```
+
 ### The smallest valid file
 
 You can omit `active_interval_seconds`, `active_window_seconds`,
-`full_reconcile_interval_seconds`, `[state]`, and `[status]`. A file with
+`full_reconcile_interval_seconds`, `[state]`, `[status]`, and `[notify]`. A file with
 `[git]` (`repo_url`, `branch`, `clone_path`, `pull_interval_seconds`) and
 `[sops].ssh_key_path` is valid. The agent uses the defaults above for
 everything else.
@@ -113,3 +167,42 @@ directory, and adds no syntax of its own.
 There is one thing to know. A service that reads decrypted secrets must
 point at their absolute runtime path, not a relative one. See
 [Secrets](secrets.md).
+
+## Notifications
+
+The status page tells you what is wrong when you look. Email tells you
+when you did not look.
+
+The agent sends one email when a service goes from working to failing, and
+one when it works again. It does not send an email on every cycle while a
+service stays broken. A failure of the git sync is reported in the same
+way, as `git sync`. If several services change state in the same cycle,
+you get one email that lists all of them.
+
+- A service counts as failing when its last deploy, secrets decrypt, or
+  teardown failed. It counts as working again after the next success.
+- Between two "failing" emails for the same service the agent waits at
+  least `min_interval_seconds`. A failure inside that time is not lost:
+  the email goes out when the time has passed, if the service is still
+  failing. If the service recovers first, you get no email for it at all.
+- The agent keeps this state in memory. After a restart, a service that is
+  still failing causes one new email. If the agent restarts in a loop, you
+  get one email per restart, up to the rate limit of a fresh process.
+- Sending runs in the background with a 30 second limit. A slow or broken
+  mail server never delays a deploy. If a send fails, the agent writes one
+  warning to the journal (`notification not sent`, with the step and a
+  short reason) and does not try again. The next state change sends
+  a new email. Because a lost "failing" email is not retried, a later
+  "recovered" email can arrive for a failure you never received (for
+  example when the send failed or the send queue was full).
+- The email says which service, at which stage (`sync`, `decrypt`,
+  `deploy`, `teardown`), the commit, the time and, if you set it, the link
+  to the status page. It contains error text only if `include_error` is
+  `true`.
+- Not covered: a broken `services.toml` (the agent keeps the last good
+  list and logs a warning), and a failure to remove decrypted secrets.
+  Both show on the status page and in the journal.
+
+The agent never opens a connection to a mail server the repository chooses.
+The server, the recipients and the password all come from the host's
+`config.toml`.

@@ -63,3 +63,22 @@ ssh_key_path = "/home/gitops/.ssh/id_ed25519"
 # interface -- see docs/status-page.md.
 # [status]
 # listen_addr = "0.0.0.0:9090"
+
+# Email when a service starts failing or recovers (internal/notify).
+# Optional -- leaving [notify] out, or smtp_host empty, turns it off and
+# the agent says nothing about it. See docs/configuration.md.
+#
+# The password does NOT go in this file (it is world-readable). Put it in
+# password_file: a regular file owned by the user the agent runs as, mode
+# 0600. The agent refuses to use a file that group or others can read.
+# [notify]
+# smtp_host = "smtp.example.org"
+# smtp_port = 587                # 465 for tls = "implicit"
+# tls = "starttls"               # "starttls", "implicit", or "none" (loopback only)
+# from = "gitops-agent@example.org"
+# to = ["you@example.org"]
+# username = "gitops-agent@example.org"
+# password_file = "/etc/gitops-agent/smtp-password"
+# min_interval_seconds = 3600
+# include_error = false          # true adds the first line of the error text
+# status_url = "https://status.example.org/"

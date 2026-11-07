@@ -2,12 +2,14 @@ package main
 
 import (
 	"log/slog"
+	"time"
 
 	"github.com/go-git/go-git/v5/plumbing/transport"
 
 	"github.com/oddsund/gitops-agent/internal/config"
 	"github.com/oddsund/gitops-agent/internal/deploy"
 	"github.com/oddsund/gitops-agent/internal/gitsync"
+	"github.com/oddsund/gitops-agent/internal/notify"
 	"github.com/oddsund/gitops-agent/internal/reconcile"
 	"github.com/oddsund/gitops-agent/internal/sopsdecrypt"
 )
@@ -24,6 +26,24 @@ var (
 	_ reconcile.Decrypter      = sopsDecrypter{}
 	_ reconcile.Deployer       = composeDeployer{}
 )
+
+// notifyConfig converts the [notify] section into the notify package's
+// plain-value config. hostname is this machine's name.
+func notifyConfig(nc config.NotifyConfig, hostname string) notify.Config {
+	return notify.Config{
+		Host:         nc.SMTPHost,
+		Port:         nc.SMTPPort,
+		TLS:          nc.TLS,
+		From:         nc.From,
+		To:           nc.To,
+		Username:     nc.Username,
+		PasswordFile: nc.PasswordFile,
+		MinInterval:  time.Duration(nc.MinIntervalSeconds) * time.Second,
+		IncludeError: nc.IncludeError,
+		StatusURL:    nc.StatusURL,
+		Hostname:     hostname,
+	}
+}
 
 type gitSyncer struct {
 	cfg  gitsync.Config

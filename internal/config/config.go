@@ -5,6 +5,9 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"net/mail"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -22,6 +25,7 @@ type AgentConfig struct {
 	Sops   Sops         `toml:"sops"`
 	State  StateConfig  `toml:"state"`
 	Status StatusConfig `toml:"status"`
+	Notify NotifyConfig `toml:"notify"`
 }
 
 type Git struct {
@@ -89,6 +93,33 @@ type StatusConfig struct {
 // overrides this.
 const DefaultStatusListenAddr = "127.0.0.1:9090"
 
+// NotifyConfig is the optional [notify] section: plain email when a service
+// starts failing or recovers. Host-local like everything in AgentConfig, so
+// the repository can never choose where mail goes. An empty SMTPHost
+// disables notifications and skips all other validation.
+//
+// There is deliberately no password key: config.toml is world-readable, so
+// the password lives in PasswordFile, which internal/notify reads at start.
+type NotifyConfig struct {
+	SMTPHost           string   `toml:"smtp_host"`
+	SMTPPort           int      `toml:"smtp_port"`
+	TLS                string   `toml:"tls"`
+	From               string   `toml:"from"`
+	To                 []string `toml:"to"`
+	Username           string   `toml:"username"`
+	PasswordFile       string   `toml:"password_file"`
+	MinIntervalSeconds int      `toml:"min_interval_seconds"`
+	IncludeError       bool     `toml:"include_error"`
+	StatusURL          string   `toml:"status_url"`
+}
+
+const (
+	DefaultNotifyTLS                = "starttls"
+	DefaultNotifyMinIntervalSeconds = 3600
+	maxNotifyRecipients             = 10
+	maxNotifyStatusURL              = 2048
+)
+
 // ServicesConfig is the desired-state manifest: which services to deploy.
 // Unlike AgentConfig, this lives inside the synced repo and is reloaded
 // every poll cycle, so enabling a service is a commit, not an SSH session.
@@ -133,6 +164,31 @@ func (c *AgentConfig) applyDefaults() {
 	if c.Status.ListenAddr == "" {
 		c.Status.ListenAddr = DefaultStatusListenAddr
 	}
+	c.Notify.applyDefaults()
+}
+
+// applyDefaults does nothing while notifications are off, so a config
+// without [notify] is left exactly as it was.
+func (n *NotifyConfig) applyDefaults() {
+	if n.SMTPHost == "" {
+		return
+	}
+	if n.TLS == "" {
+		n.TLS = DefaultNotifyTLS
+	}
+	if n.SMTPPort == 0 {
+		switch n.TLS {
+		case "implicit":
+			n.SMTPPort = 465
+		case "none":
+			n.SMTPPort = 25
+		default:
+			n.SMTPPort = 587
+		}
+	}
+	if n.MinIntervalSeconds == 0 {
+		n.MinIntervalSeconds = DefaultNotifyMinIntervalSeconds
+	}
 }
 
 func (c *AgentConfig) Validate() error {
@@ -156,6 +212,80 @@ func (c *AgentConfig) Validate() error {
 	}
 	if c.Sops.SSHKeyPath == "" {
 		return fmt.Errorf("sops.ssh_key_path is required")
+	}
+	return c.Notify.validate()
+}
+
+// validate is pure: no file reads, no network. config.Load is also called
+// by the installer, which must not be affected by host state such as the
+// password file.
+func (n *NotifyConfig) validate() error {
+	if n.SMTPHost == "" {
+		return nil
+	}
+	host := n.SMTPHost
+	if strings.ContainsAny(host, " \t\r\n/@") || strings.IndexFunc(host, unicode.IsControl) >= 0 ||
+		(strings.Contains(host, ":") && net.ParseIP(host) == nil) {
+		return fmt.Errorf("notify.smtp_host must be a bare host name or IP address; put the port in notify.smtp_port")
+	}
+	switch n.TLS {
+	case "starttls", "implicit", "none":
+	default:
+		return fmt.Errorf("notify.tls must be \"starttls\", \"implicit\" or \"none\"")
+	}
+	if n.SMTPPort < 1 || n.SMTPPort > 65535 {
+		return fmt.Errorf("notify.smtp_port must be between 1 and 65535")
+	}
+	if n.TLS == "none" {
+		if ip := net.ParseIP(host); host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+			return fmt.Errorf("notify.tls = \"none\" is only allowed for a loopback smtp_host (a local relay); use \"starttls\" or \"implicit\" for anything else")
+		}
+		if n.Username != "" {
+			return fmt.Errorf("notify.username requires tls = \"starttls\" or \"implicit\": the agent never sends a password in clear text")
+		}
+	}
+	if (n.Username == "") != (n.PasswordFile == "") {
+		return fmt.Errorf("notify.username and notify.password_file must be set together")
+	}
+	if strings.IndexFunc(n.Username, unicode.IsControl) >= 0 {
+		return fmt.Errorf("notify.username must not contain control characters")
+	}
+	if n.PasswordFile != "" && !filepath.IsAbs(n.PasswordFile) {
+		return fmt.Errorf("notify.password_file must be an absolute path")
+	}
+	if _, err := mail.ParseAddress(n.From); err != nil {
+		return fmt.Errorf("notify.from: not a valid address")
+	}
+	if len(n.To) == 0 {
+		return fmt.Errorf("notify.to must list at least one address")
+	}
+	if len(n.To) > maxNotifyRecipients {
+		return fmt.Errorf("notify.to has %d addresses; the limit is %d", len(n.To), maxNotifyRecipients)
+	}
+	for i, a := range n.To {
+		if _, err := mail.ParseAddress(a); err != nil {
+			return fmt.Errorf("notify.to[%d]: not a valid address", i)
+		}
+	}
+	if n.MinIntervalSeconds < 0 {
+		return fmt.Errorf("notify.min_interval_seconds must not be negative")
+	}
+	return n.validateStatusURL()
+}
+
+func (n *NotifyConfig) validateStatusURL() error {
+	if n.StatusURL == "" {
+		return nil
+	}
+	if len(n.StatusURL) > maxNotifyStatusURL || strings.IndexFunc(n.StatusURL, unicode.IsControl) >= 0 {
+		return fmt.Errorf("notify.status_url is too long or contains control characters")
+	}
+	u, err := url.Parse(n.StatusURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("notify.status_url must be an http or https URL")
+	}
+	if u.User != nil {
+		return fmt.Errorf("notify.status_url must not contain a user name or password")
 	}
 	return nil
 }
