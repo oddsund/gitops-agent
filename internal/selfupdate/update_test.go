@@ -204,10 +204,18 @@ func TestUpdate_FreshInstall(t *testing.T) {
 		t.Fatalf("calls = %+v", fake.Calls)
 	}
 	gh := fake.Calls[0]
-	if gh.Name != "/usr/bin/gh" || len(gh.Args) != 5 ||
-		!reflect.DeepEqual(gh.Args[:2], []string{"attestation", "verify"}) ||
-		!reflect.DeepEqual(gh.Args[3:], []string{"-R", "test/repo"}) {
-		t.Errorf("gh call = %+v", gh)
+	if gh.Name != "/usr/bin/gh" || len(gh.Args) != 10 {
+		t.Fatalf("gh call = %+v", gh)
+	}
+	wantArgs := []string{
+		"attestation", "verify", gh.Args[2],
+		"-R", "test/repo",
+		"--signer-workflow", "test/repo/.github/workflows/release.yml",
+		"--source-ref", "refs/tags/v1.2.3",
+		"--deny-self-hosted-runners",
+	}
+	if !reflect.DeepEqual(gh.Args, wantArgs) {
+		t.Errorf("gh args = %v, want %v", gh.Args, wantArgs)
 	}
 	if !filepath.IsAbs(gh.Args[2]) || filepath.Dir(gh.Args[2]) != filepath.Dir(cfg.BinPath) {
 		t.Errorf("attested path %q should be absolute and in the bin dir", gh.Args[2])

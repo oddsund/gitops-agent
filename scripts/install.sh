@@ -18,8 +18,10 @@
 # it; do not pipe it into a shell. The .sha256 file comes from the same
 # origin as the binary, so it only guards against corruption, not against a
 # compromised release. The build provenance attestation
-# (`gh attestation verify`) is the real provenance check; without `gh` this
-# script falls back to the checksum alone and says so.
+# (`gh attestation verify`) is the real provenance check; it pins
+# .github/workflows/release.yml in the configured repo, the release tag and
+# GitHub-hosted runners. Without `gh` this script falls back to the checksum
+# alone and says so.
 #
 # Environment:
 #   GITOPS_AGENT_REPO              release source, default oddsund/gitops-agent
@@ -211,9 +213,16 @@ if [ "$skip_download" -eq 0 ]; then
     log "WARNING: gh not found, skipping build provenance verification; the checksum alone does not prove who built this binary. Install the GitHub CLI and re-run to verify provenance."
   else
     log "Verifying build provenance with gh..."
-    if ! gh attestation verify "$staged" -R "$REPO"; then
+    # $REPO and $tag were regex-validated above, so they are safe in argv.
+    # release.yml runs only on tag push, so the attested ref is the tag.
+    # Keep the workflow path in step with internal/selfupdate/attestation.go.
+    if ! gh attestation verify "$staged" \
+      -R "$REPO" \
+      --signer-workflow "${REPO}/.github/workflows/release.yml" \
+      --source-ref "refs/tags/${tag}" \
+      --deny-self-hosted-runners; then
       ${sudo_cmd[@]+"${sudo_cmd[@]}"} rm -f -- "$staged"
-      die "build provenance verification failed for ${asset_name}; nothing was installed. If gh is not logged in, run 'gh auth login'. Run this script as your normal user, not with sudo, so your own gh login is used; if you must run it as root, pass the variables through sudo: 'sudo GH_TOKEN=... bash install.sh ...' or, to proceed on the checksum alone, 'sudo GITOPS_AGENT_SKIP_ATTESTATION=1 bash install.sh ...'"
+      die "build provenance verification failed for ${asset_name}; nothing was installed. If gh reports an unknown flag, upgrade gh to >= 2.68.0. If gh is not logged in, run 'gh auth login'. Run this script as your normal user, not with sudo, so your own gh login is used; if you must run it as root, pass the variables through sudo: 'sudo GH_TOKEN=... bash install.sh ...' or, to proceed on the checksum alone, 'sudo GITOPS_AGENT_SKIP_ATTESTATION=1 bash install.sh ...'"
     fi
     log "Build provenance verified"
   fi

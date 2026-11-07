@@ -97,7 +97,7 @@ func Update(ctx context.Context, cfg Config) error {
 	}
 	defer os.Remove(tmp)
 
-	if err := verifyAttestation(ctx, cfg, tmp); err != nil {
+	if err := verifyAttestation(ctx, cfg, tmp, tag); err != nil {
 		return err
 	}
 

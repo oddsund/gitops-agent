@@ -26,6 +26,9 @@ real_script="$here/install.sh"
 real_bash="$BASH"
 real_install="$(command -v install)"
 
+# The release tag the fake curl serves for releases/latest.
+TAG=v1.2.3
+
 pass=0
 failed=0
 ok() { pass=$((pass + 1)); }
@@ -133,7 +136,7 @@ while [ "$#" -gt 0 ]; do
 done
 case "$url" in
 */releases/latest)
-  printf '{\n  "tag_name": "%s"\n}\n' "${FAKE_TAG-v1.2.3}"
+  printf '{\n  "tag_name": "%s"\n}\n' "${FAKE_TAG-}"
   ;;
 *.sha256)
   [ "${FAKE_NO_SHA:-}" != 1 ] || exit 22
@@ -157,6 +160,10 @@ with_gh() {
   cat >"$t/fakebin/gh" <<'FAKE'
 #!/usr/bin/env bash
 echo "$*" >>"$FAKE_T/gh.log"
+if [ "${FAKE_GH:-}" = unknown-flag ]; then
+  echo "unknown flag: --signer-workflow" >&2
+  exit 1
+fi
 [ "${FAKE_GH:-}" != fail ]
 FAKE
   chmod 0755 "$t/fakebin/gh"
@@ -175,7 +182,7 @@ run_install() {
   rm -f "$t/out" "$t/err"
   RC=0
   env -i PATH="$t/fakebin:$t/tools" HOME="$t" TMPDIR="$t/tmp" \
-    FAKE_T="$t" FAKE_HANDOFF="$t/handoff.args" \
+    FAKE_T="$t" FAKE_HANDOFF="$t/handoff.args" FAKE_TAG="$TAG" \
     ${extra[@]+"${extra[@]}"} \
     "$real_bash" "$t/install.sh" "$@" >"$t/out" 2>"$t/err" || RC=$?
   OUT="$(cat "$t/out")"
@@ -228,7 +235,8 @@ while IFS= read -r line; do
   if printf '%s\n' "${line#-q }" | grep -Eq ' (-s|-q|--silent|--progress-bar)( |$)'; then fail "silent curl for a download: $line"; else ok; fi
 done <"$t/curl.log"
 if [ "$downloads" -eq 2 ]; then ok; else fail "expected 2 download calls, got $downloads"; fi
-if [ "$(cat "$t/gh.log")" = "attestation verify $bin.new -R oddsund/gitops-agent" ]; then ok; else fail "gh argv: $(cat "$t/gh.log")"; fi
+want_gh="attestation verify $bin.new -R oddsund/gitops-agent --signer-workflow oddsund/gitops-agent/.github/workflows/release.yml --source-ref refs/tags/$TAG --deny-self-hosted-runners"
+if [ "$(cat "$t/gh.log")" = "$want_gh" ]; then ok; else fail "gh argv: $(cat "$t/gh.log")"; fi
 if grep -q '^sudo gh ' "$t/sudo.log"; then fail "gh ran through sudo"; else ok; fi
 
 # 2. Checksum mismatch.
@@ -295,6 +303,21 @@ assert_rc 1
 assert_err "build provenance verification failed"
 assert_bindir_empty
 assert_no_workdir
+setup fork-repo
+with_gh
+run_install GITOPS_AGENT_REPO=alice/fork -- --repo-url u
+assert_rc 0
+want_gh="attestation verify $bin.new -R alice/fork --signer-workflow alice/fork/.github/workflows/release.yml --source-ref refs/tags/$TAG --deny-self-hosted-runners"
+if [ "$(cat "$t/gh.log")" = "$want_gh" ]; then ok; else fail "gh argv: $(cat "$t/gh.log")"; fi
+
+setup gh-old-flag
+with_gh
+run_install FAKE_GH=unknown-flag -- --repo-url u
+assert_rc 1
+assert_err "upgrade gh"
+assert_bindir_empty
+assert_no_workdir
+
 setup gh-fails-skipped
 with_gh
 run_install FAKE_GH=fail GITOPS_AGENT_SKIP_ATTESTATION=1 -- --repo-url u

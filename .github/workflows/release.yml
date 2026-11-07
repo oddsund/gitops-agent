@@ -54,6 +54,9 @@ jobs:
       # generates SLSA build provenance. That is exactly what
       # actions/attest-build-provenance does as of its v4, where it became
       # a thin wrapper around this action.
+      # TRAP: verifiers pin this file's path and the tag ref. If you rename
+      # it or add other triggers, update internal/selfupdate/attestation.go,
+      # scripts/install.sh and the docs, or every install will fail.
       - name: Attest build provenance
         uses: actions/attest@v4
         with:

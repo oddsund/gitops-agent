@@ -25,7 +25,7 @@ func attestationCfg() (Config, *cmdrun.Fake, *[]string) {
 func TestAttestation_Success(t *testing.T) {
 	cfg, fake, logs := attestationCfg()
 
-	if err := verifyAttestation(t.Context(), cfg, "/x/y"); err != nil {
+	if err := verifyAttestation(t.Context(), cfg, "/x/y", "v1.2.3"); err != nil {
 		t.Fatal(err)
 	}
 	if len(fake.Calls) != 1 {
@@ -35,7 +35,14 @@ func TestAttestation_Success(t *testing.T) {
 	if c.Name != "/opt/gh" {
 		t.Errorf("name = %q", c.Name)
 	}
-	if want := []string{"attestation", "verify", "/x/y", "-R", "test/repo"}; !reflect.DeepEqual(c.Args, want) {
+	want := []string{
+		"attestation", "verify", "/x/y",
+		"-R", "test/repo",
+		"--signer-workflow", "test/repo/.github/workflows/release.yml",
+		"--source-ref", "refs/tags/v1.2.3",
+		"--deny-self-hosted-runners",
+	}
+	if !reflect.DeepEqual(c.Args, want) {
 		t.Errorf("args = %v, want %v", c.Args, want)
 	}
 	if !strings.Contains(joined(logs), "build provenance verified") {
@@ -49,7 +56,7 @@ func TestAttestation_Failure(t *testing.T) {
 		return []byte("no matching attestations"), errors.New("exit status 1")
 	}
 
-	err := verifyAttestation(t.Context(), cfg, "/x/y")
+	err := verifyAttestation(t.Context(), cfg, "/x/y", "v1.2.3")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -64,7 +71,7 @@ func TestAttestation_GhMissing(t *testing.T) {
 	cfg, fake, logs := attestationCfg()
 	cfg.LookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 
-	if err := verifyAttestation(t.Context(), cfg, "/x/y"); err != nil {
+	if err := verifyAttestation(t.Context(), cfg, "/x/y", "v1.2.3"); err != nil {
 		t.Fatal(err)
 	}
 	if len(fake.Calls) != 0 {
@@ -84,7 +91,7 @@ func TestAttestation_OptOut(t *testing.T) {
 		return "", exec.ErrNotFound
 	}
 
-	if err := verifyAttestation(t.Context(), cfg, "/x/y"); err != nil {
+	if err := verifyAttestation(t.Context(), cfg, "/x/y", "v1.2.3"); err != nil {
 		t.Fatal(err)
 	}
 	if len(fake.Calls) != 0 {
@@ -99,7 +106,7 @@ func TestAttestation_OptOut(t *testing.T) {
 func TestAttestation_TokenInEnvOnly(t *testing.T) {
 	cfg, fake, _ := attestationCfg()
 	cfg.Token = "tok"
-	if err := verifyAttestation(t.Context(), cfg, "/x/y"); err != nil {
+	if err := verifyAttestation(t.Context(), cfg, "/x/y", "v1.2.3"); err != nil {
 		t.Fatal(err)
 	}
 	c := fake.Calls[0]
@@ -113,7 +120,7 @@ func TestAttestation_TokenInEnvOnly(t *testing.T) {
 	}
 
 	cfg, fake, _ = attestationCfg()
-	if err := verifyAttestation(t.Context(), cfg, "/x/y"); err != nil {
+	if err := verifyAttestation(t.Context(), cfg, "/x/y", "v1.2.3"); err != nil {
 		t.Fatal(err)
 	}
 	if len(fake.Calls[0].Env) != 0 {
@@ -123,10 +130,70 @@ func TestAttestation_TokenInEnvOnly(t *testing.T) {
 
 func TestAttestation_RelativePath(t *testing.T) {
 	cfg, fake, _ := attestationCfg()
-	if err := verifyAttestation(t.Context(), cfg, "x"); err == nil {
+	if err := verifyAttestation(t.Context(), cfg, "x", "v1.2.3"); err == nil {
 		t.Fatal("expected error")
 	}
 	if len(fake.Calls) != 0 {
 		t.Errorf("calls = %+v", fake.Calls)
+	}
+}
+
+func TestAttestation_ForkDerivesWorkflow(t *testing.T) {
+	cfg, fake, _ := attestationCfg()
+	cfg.Repo = "someone/fork"
+	if err := verifyAttestation(t.Context(), cfg, "/x/y", "v1.2.3"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"attestation", "verify", "/x/y",
+		"-R", "someone/fork",
+		"--signer-workflow", "someone/fork/.github/workflows/release.yml",
+		"--source-ref", "refs/tags/v1.2.3",
+		"--deny-self-hosted-runners",
+	}
+	if !reflect.DeepEqual(fake.Calls[0].Args, want) {
+		t.Errorf("args = %v, want %v", fake.Calls[0].Args, want)
+	}
+}
+
+func TestAttestation_InvalidTag(t *testing.T) {
+	for _, tag := range []string{"", "v1.2", "latest", "v1.2.3 --foo", "v1.2.3-rc1", "--owner=x"} {
+		cfg, fake, _ := attestationCfg()
+		if err := verifyAttestation(t.Context(), cfg, "/x/y", tag); err == nil {
+			t.Errorf("tag %q: expected error", tag)
+		}
+		if len(fake.Calls) != 0 {
+			t.Errorf("tag %q: calls = %+v", tag, fake.Calls)
+		}
+	}
+}
+
+func TestAttestation_InvalidTagStillSkippedWhenOptedOut(t *testing.T) {
+	cfg, fake, _ := attestationCfg()
+	cfg.SkipAttestation = true
+	if err := verifyAttestation(t.Context(), cfg, "/x/y", ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.Calls) != 0 {
+		t.Errorf("calls = %+v", fake.Calls)
+	}
+}
+
+func TestAttestation_OldGhHint(t *testing.T) {
+	cfg, fake, _ := attestationCfg()
+	fake.Func = func(cmdrun.Call) ([]byte, error) {
+		return []byte("unknown flag: --signer-workflow"), errors.New("exit status 1")
+	}
+	err := verifyAttestation(t.Context(), cfg, "/x/y", "v1.2.3")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	for _, want := range []string{"unknown flag: --signer-workflow", "upgrade to gh >= " + minGHVersion} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err, want)
+		}
+	}
+	if len(fake.Calls) != 1 {
+		t.Errorf("calls = %+v, want exactly one (no retry without the flags)", fake.Calls)
 	}
 }
