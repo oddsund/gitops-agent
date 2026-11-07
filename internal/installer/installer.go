@@ -42,7 +42,7 @@ type Config struct {
 	RepoURL    string // config.toml [git].repo_url. Required only when config.toml does not exist.
 	SSHKeyPath string // config.toml [sops].ssh_key_path. Same.
 	ClonePath  string // config.toml [git].clone_path. Same.
-	Version    string // main.version; "dev" or "" means do not write the version file.
+	Version    string // main.version; the version file is written only for a vX.Y.Z build run from the installed binary.
 
 	// Root is joined in front of every fixed path above. Tests only; there
 	// is deliberately no flag or env var for it. Must be absolute if set.
@@ -59,6 +59,10 @@ type Config struct {
 	// syscall.Stat_t. Replaced in tests, which cannot chown under a temp
 	// Root.
 	FileUID func(fs.FileInfo) (int, bool)
+	// Executable returns the path of the running binary. Defaults to
+	// os.Executable. Replaced in tests, whose own binary is never the one
+	// under Root.
+	Executable func() (string, error)
 }
 
 // Install is idempotent: unchanged files are not rewritten and the agent
@@ -78,6 +82,9 @@ func Install(ctx context.Context, cfg Config) error {
 	}
 	if cfg.FileUID == nil {
 		cfg.FileUID = fileUID
+	}
+	if cfg.Executable == nil {
+		cfg.Executable = os.Executable
 	}
 	if cfg.EUID() != 0 {
 		return errors.New("install must run as root")
@@ -168,7 +175,7 @@ func Install(ctx context.Context, cfg Config) error {
 		return err
 	}
 
-	if err := installVersionFile(cfg, p(versionFilePath)); err != nil {
+	if err := installVersionFile(cfg, p(versionFilePath), p(binPath)); err != nil {
 		return err
 	}
 
@@ -261,12 +268,17 @@ func writeUnit(cfg Config, path, content string) (writeResult, error) {
 	return res, nil
 }
 
-// installVersionFile writes the file only when it is absent and the build
-// is a release tag. After the first write `gitops-agent update` owns it,
-// and the binary running install may be older or newer than what it
-// records. A `git describe` build must not poison the file: update treats
-// an unparsable value as "update available".
-func installVersionFile(cfg Config, path string) error {
+// installVersionFile makes the version file describe the binary on disk. It
+// records cfg.Version on every run, because install.sh replaces the binary
+// and then runs install, so "only if absent" left the file stale and made
+// `update` and homelab's verify.bash see the old version. An older binary
+// is recorded too: the file must match the disk, and a too-new value would
+// trip update's no-downgrade guard. It records nothing when the version is
+// not a release tag (update treats an unparsable value as "update
+// available") or when the running executable is not the installed binary
+// (for example ./gitops-agent install from a download directory), or when
+// that cannot be determined. The check is best effort.
+func installVersionFile(cfg Config, path, installedBin string) error {
 	v := cfg.Version
 	if v == "" || v == "dev" {
 		cfg.Logf("not writing %s: version is %q", path, v)
@@ -276,16 +288,53 @@ func installVersionFile(cfg Config, path string) error {
 		cfg.Logf("not writing %s: version %q is not a release tag (vX.Y.Z)", path, v)
 		return nil
 	}
-	created, err := writeNew(path, v+"\n", 0o644)
+	ok, err := runningInstalledBinary(cfg.Executable, installedBin)
+	if err != nil {
+		// A cosmetic file must not block the systemctl steps, for example
+		// when the binary was replaced while install runs.
+		cfg.Logf("not writing %s: %v", path, err)
+		return nil
+	}
+	if !ok {
+		cfg.Logf("not writing %s: the running binary is not %s", path, binPath)
+		return nil
+	}
+	res, err := writeAtomic(path, v+"\n", 0o644)
 	if err != nil {
 		return err
 	}
-	if created {
+	switch {
+	case res.Created:
 		cfg.Logf("wrote %s (%s)", path, v)
-	} else {
-		cfg.Logf("%s already exists, leaving it as is", path)
+	case res.Changed:
+		cfg.Logf("updated %s to %s", path, v)
+	default:
+		cfg.Logf("%s already records %s", path, v)
 	}
 	return nil
+}
+
+// runningInstalledBinary reports whether the running executable is the same
+// file as installedBin. os.SameFile compares device and inode, so symlinks
+// and hard links resolve without string comparison. A missing installedBin
+// is "no", not an error: checkBinary already warned.
+func runningInstalledBinary(executable func() (string, error), installedBin string) (bool, error) {
+	exe, err := executable()
+	if err != nil {
+		return false, fmt.Errorf("finding the running binary: %w", err)
+	}
+	a, err := os.Stat(exe)
+	if err != nil {
+		return false, fmt.Errorf("checking %s: %w", exe, err)
+	}
+	b, err := os.Stat(installedBin)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("checking %s: %w", binPath, err)
+	}
+	return os.SameFile(a, b), nil
 }
 
 // checkBinary refuses a binary the unprivileged service user could replace:
