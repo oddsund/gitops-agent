@@ -32,6 +32,8 @@ jobs:
         run: git ls-files '*.sh' '*.bash' | xargs shellcheck
       - name: install.sh tests
         run: bash scripts/install_test.bash
+      - name: update.bash shim tests
+        run: bash scripts/update_shim_test.bash
 
   build:
     needs: test

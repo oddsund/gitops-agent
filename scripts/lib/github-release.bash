@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# Deprecated. Nothing in this repository sources this file any more:
+# scripts/install.sh verifies inline and `gitops-agent update` verifies in
+# Go. It stays only because external provisioning scripts that clone this
+# repo at a release tag still source it. It will be removed in a later
+# release; do not add new callers.
+#
 # Shared helpers for downloading and verifying gitops-agent release
 # assets from GitHub: checksum, plus build provenance attestation when
 # gh is available.
