@@ -40,6 +40,17 @@ func TestDispatchUnknownSubcommand(t *testing.T) {
 	}
 }
 
+func TestUsageListsSubcommands(t *testing.T) {
+	var buf bytes.Buffer
+	usage(&buf)
+
+	for _, want := range []string{"update", "gitops-agent <subcommand>"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("usage = %q, want it to contain %q", buf.String(), want)
+		}
+	}
+}
+
 func TestDispatchRegisteredSubcommand(t *testing.T) {
 	var called []string
 	subcommands["fake"] = func(args []string) error {

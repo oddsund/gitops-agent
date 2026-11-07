@@ -1,55 +1,44 @@
-// Package selfupdate implements the selfupdate mechanism currently in systemd/update.bash
-// and scripts/github-release.bash
-//
-// Work-in-progress, currently only has functionality for fetching the latest release tag from
-// github.
-// Will eventually fetch the new binary from github, and update itself in place.
-
 package selfupdate
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 )
 
 type gitHubResponse struct {
 	TagName string `json:"tag_name"`
 }
 
-func latestReleaseTag(cfg Config) (string, error) {
+func latestReleaseTag(ctx context.Context, cfg Config) (string, error) {
 	cfg = cfg.populateWithDefaultValues()
+	if err := validateRepo(cfg.Repo); err != nil {
+		return "", err
+	}
+
 	url := fmt.Sprintf("%s/repos/%s/releases/latest", cfg.APIBaseURL, cfg.Repo)
-	request, err := http.NewRequest("GET", url, nil)
+	resp, err := doGet(ctx, cfg.HTTPClient, url, "application/vnd.github+json", cfg.Token)
 	if err != nil {
-		return "", fmt.Errorf("could not create request: %w", err)
-	}
-
-	request.Header.Add("Accept", "application/vnd.github+json")
-	if len(cfg.Token) > 0 {
-		request.Header.Add("Authorization", fmt.Sprintf("Bearer %s", cfg.Token))
-	}
-
-	resp, err := cfg.HTTPClient.Do(request)
-	if err != nil {
-		return "", fmt.Errorf("error while calling %s/%s: %w", cfg.APIBaseURL, cfg.Repo, err)
+		return "", err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("got status %d when calling %s/%s, expected 200", resp.StatusCode, cfg.APIBaseURL, cfg.Repo)
+	body, err := readLimited(resp.Body, maxMetaBytes)
+	if err != nil {
+		return "", fmt.Errorf("reading response from %s: %w", url, err)
 	}
 
 	var gh gitHubResponse
-	err = json.NewDecoder(resp.Body).Decode(&gh)
-
-	if err != nil {
-		return "", fmt.Errorf("error while deserializing response from %s/%s: %w", cfg.APIBaseURL, cfg.Repo, err)
+	if err := json.Unmarshal(body, &gh); err != nil {
+		return "", fmt.Errorf("error while deserializing response from %s: %w", url, err)
 	}
 
 	if gh.TagName == "" {
-		return "", fmt.Errorf("no tag_name returned from %s/%s", cfg.APIBaseURL, cfg.Repo)
+		return "", fmt.Errorf("no tag_name returned from %s", url)
 	}
 
+	if err := validateTag(gh.TagName); err != nil {
+		return "", err
+	}
 	return gh.TagName, nil
 }
