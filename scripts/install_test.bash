@@ -142,7 +142,7 @@ case "$url" in
   [ "${FAKE_NO_SHA:-}" != 1 ] || exit 22
   cp "$FAKE_T/fixtures/asset.sha256" "$out"
   ;;
-*/gitops-agent-linux-arm64)
+*/gitops-agent-linux-arm64 | */gitops-agent-linux-amd64)
   [ "${FAKE_NO_ASSET:-}" != 1 ] || exit 22
   cp "$FAKE_T/fixtures/asset" "$out"
   ;;
@@ -288,12 +288,40 @@ for bad in latest v1.2 v1.2.3-rc1 'v1.2.3/../x'; do
   assert_bindir_empty
 done
 
-# 7. Unsupported architecture fails before any network access.
-setup arch
-run_install FAKE_ARCH=x86_64 -- --repo-url u
-assert_rc 1
-assert_err "linux/arm64 only"
-if [ ! -s "$t/curl.log" ]; then ok; else fail "network used before the arch check"; fi
+# 7. Architecture mapping. The asset name must follow uname -m, and the
+# attestation and checksum run for it like for any other asset.
+for a in aarch64 arm64; do
+  setup "arch-arm64 $a"
+  with_gh
+  run_install FAKE_ARCH="$a" -- --repo-url u
+  assert_rc 0
+  assert_err "Downloading gitops-agent-linux-arm64 $TAG"
+  if grep -q '/releases/download/.*/gitops-agent-linux-arm64$' "$t/curl.log" &&
+    ! grep -q 'gitops-agent-linux-amd64' "$t/curl.log"; then ok; else fail "$a: wrong asset requested: $(cat "$t/curl.log")"; fi
+  if cmp -s "$t/fixtures/asset" "$bin"; then ok; else fail "$a: binary not installed"; fi
+done
+for a in x86_64 amd64; do
+  setup "arch-amd64 $a"
+  with_gh
+  run_install FAKE_ARCH="$a" -- --repo-url u
+  assert_rc 0
+  assert_err "Downloading gitops-agent-linux-amd64 $TAG"
+  if grep -q '/releases/download/.*/gitops-agent-linux-amd64$' "$t/curl.log" &&
+    grep -q '/releases/download/.*/gitops-agent-linux-amd64.sha256$' "$t/curl.log" &&
+    ! grep -q 'gitops-agent-linux-arm64' "$t/curl.log"; then ok; else fail "$a: wrong asset requested: $(cat "$t/curl.log")"; fi
+  if cmp -s "$t/fixtures/asset" "$bin"; then ok; else fail "$a: binary not installed"; fi
+  assert_err "Build provenance verified"
+done
+# Unsupported architectures fail before any network access.
+for a in armv7l i686 riscv64; do
+  setup "arch-unsupported $a"
+  run_install FAKE_ARCH="$a" -- --repo-url u
+  assert_rc 1
+  assert_err "linux/arm64 and linux/amd64 only"
+  assert_err "this host is $a"
+  if [ ! -s "$t/curl.log" ]; then ok; else fail "network used before the arch check"; fi
+  assert_bindir_empty
+done
 
 # 8. gh present but failing.
 setup gh-fails

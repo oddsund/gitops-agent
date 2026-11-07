@@ -5,16 +5,12 @@ on:
     tags:
       - "v*"
 
+# Default for every job; a job widens it only as far as it needs.
 permissions:
-  contents: write
-  # For actions/attest: it mints a short-lived OIDC token
-  # (id-token) to sign, then writes the attestation back to this repo
-  # (attestations). Neither needs a secret.
-  id-token: write
-  attestations: write
+  contents: read
 
 jobs:
-  release:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -27,19 +23,43 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
 
-      - name: Build linux/arm64 binary
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goarch: [arm64, amd64]
+    permissions:
+      contents: read
+      # For actions/attest: it mints a short-lived OIDC token
+      # (id-token) to sign, then writes the attestation back to this repo
+      # (attestations). Neither needs a secret.
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Build linux/${{ matrix.goarch }} binary
         env:
           GOOS: linux
-          GOARCH: arm64
+          GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
         # GITHUB_REF_NAME is the tag (vX.Y.Z), embedded so `gitops-agent
         # -version` reports exactly what was released.
-        run: go build -ldflags "-X main.version=${GITHUB_REF_NAME}" -o gitops-agent-linux-arm64 ./cmd/gitops-agent
+        run: go build -ldflags "-X main.version=${GITHUB_REF_NAME}" -o "gitops-agent-linux-${GOARCH}" ./cmd/gitops-agent
 
       # Lets anyone installing the release verify the download wasn't
-      # corrupted or swapped in transit.
+      # corrupted or swapped in transit. The format (digest, two spaces,
+      # file name) is what scripts/install.sh and internal/selfupdate parse.
       - name: Checksum the binary
-        run: sha256sum gitops-agent-linux-arm64 > gitops-agent-linux-arm64.sha256
+        env:
+          GOARCH: ${{ matrix.goarch }}
+        run: sha256sum "gitops-agent-linux-${GOARCH}" > "gitops-agent-linux-${GOARCH}.sha256"
 
       # Attests, via GitHub's OIDC-backed Sigstore setup, that this exact
       # binary was built by this exact workflow run from this exact commit.
@@ -55,17 +75,71 @@ jobs:
       # actions/attest-build-provenance does as of its v4, where it became
       # a thin wrapper around this action.
       # TRAP: verifiers pin this file's path and the tag ref. If you rename
-      # it or add other triggers, update internal/selfupdate/attestation.go,
+      # it, move the attest step into a reusable workflow, or add other
+      # triggers, update internal/selfupdate/attestation.go,
       # scripts/install.sh and the docs, or every install will fail.
       - name: Attest build provenance
         uses: actions/attest@v4
         with:
-          subject-path: gitops-agent-linux-arm64
+          subject-path: gitops-agent-linux-${{ matrix.goarch }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gitops-agent-linux-${{ matrix.goarch }}
+          path: |
+            gitops-agent-linux-${{ matrix.goarch }}
+            gitops-agent-linux-${{ matrix.goarch }}.sha256
+          if-no-files-found: error
+
+  # The only job with contents: write. It runs no repository code and
+  # receives the binaries as artifacts. The .sha256 files travel in the same
+  # artifacts, so the checksum check below only catches a corrupted transfer.
+  # What stops a swapped binary is the attestation check: it fails the release
+  # unless release.yml attested these exact bytes for this tag, with the same
+  # pins install.sh uses.
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # Lets `gh attestation verify` look up the attestations.
+      attestations: read
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Check the downloaded artifacts
+        working-directory: dist
+        run: |
+          ls -l
+          sha256sum -c gitops-agent-linux-arm64.sha256 gitops-agent-linux-amd64.sha256
+
+      - name: Verify build provenance
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SOURCE_REF: ${{ github.ref }}
+        run: |
+          for arch in arm64 amd64; do
+            gh attestation verify "gitops-agent-linux-${arch}" -R "${REPO}" \
+              --signer-workflow "${REPO}/.github/workflows/release.yml" \
+              --source-ref "${SOURCE_REF}" \
+              --deny-self-hosted-runners
+          done
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v3
         with:
           files: |
-            gitops-agent-linux-arm64
-            gitops-agent-linux-arm64.sha256
+            dist/gitops-agent-linux-arm64
+            dist/gitops-agent-linux-arm64.sha256
+            dist/gitops-agent-linux-amd64
+            dist/gitops-agent-linux-amd64.sha256
           generate_release_notes: true
+          # A tag with a hyphen (v1.7.0-rc1) is published as a prerelease so
+          # that /releases/latest, and thus install.sh and `gitops-agent
+          # update`, never see it.
+          prerelease: ${{ contains(github.ref_name, '-') }}

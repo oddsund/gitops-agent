@@ -15,7 +15,7 @@ two.
 The agent is one static Go binary. It needs `docker compose` on the host
 and nothing else. It exists so that a change to a self-hosted service is a
 commit instead of an SSH session. A Raspberry Pi 4 is a reasonable place
-to run it, and that is the platform the releases are built for.
+to run it. Releases are built for linux/arm64 and linux/amd64.
 
 ## What it looks like
 
@@ -51,8 +51,9 @@ less install.sh
 bash install.sh --repo-url git@github.com:you/config.git --user pi
 ```
 
-It installs the latest `linux/arm64` release, checks its checksum and
-build provenance, and sets up the config and the systemd units.
+It installs the latest release for your architecture (`linux/arm64` or
+`linux/amd64`), checks its checksum and build provenance, and sets up the
+config and the systemd units.
 [Install](docs/install.md) has the details, the limitations, and how to
 install by hand. To build from source instead:
 `go install github.com/oddsund/gitops-agent/cmd/gitops-agent@latest`.
