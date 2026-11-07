@@ -5,9 +5,11 @@ package sopsdecrypt
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/getsops/sops/v3/decrypt"
 )
@@ -70,5 +72,71 @@ func DecryptServiceSecrets(serviceDir, serviceName, sshKeyPath, secretsBaseDir s
 		return fmt.Errorf("writing %s: %w", outPath, err)
 	}
 	log.Printf("sopsdecrypt: wrote %s", outPath)
+	return nil
+}
+
+// RemoveServiceSecrets deletes <secretsBaseDir>/<serviceName>/secrets.env and
+// then the service's directory under secretsBaseDir. A file or directory
+// that is already gone is success. The directory is removed non-recursively,
+// so a directory holding anything else is left alone: it is not ours to
+// delete. The service name is validated here, independently of
+// internal/config, because this function deletes files and must not be
+// steerable out of secretsBaseDir by a hostile name.
+func RemoveServiceSecrets(serviceName, secretsBaseDir string) error {
+	if serviceName == "" || serviceName == "." || serviceName == ".." ||
+		strings.ContainsAny(serviceName, "/\\\x00") ||
+		!filepath.IsLocal(serviceName) ||
+		serviceName != filepath.Base(serviceName) {
+		return fmt.Errorf("refusing to remove secrets for invalid service name %q", serviceName)
+	}
+	// An empty base would make Join yield a path relative to the CWD.
+	if secretsBaseDir == "" {
+		return errors.New("refusing to remove secrets: empty secrets base directory")
+	}
+
+	base := filepath.Clean(secretsBaseDir)
+	dir := filepath.Join(base, serviceName)
+	file := filepath.Join(dir, "secrets.env")
+
+	// Last line of defence against anything the name check missed; the
+	// filesystem is not touched before this passes.
+	rel, err := filepath.Rel(base, dir)
+	if err != nil || !filepath.IsLocal(rel) || rel == "." {
+		return fmt.Errorf("secrets path %s escapes %s", dir, base)
+	}
+
+	// Lexical checks cannot see a symlinked service directory, through which
+	// os.Remove would delete a file outside the base. Refuse anything that
+	// is not a real directory before removing anything.
+	switch fi, err := os.Lstat(dir); {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
+		return fmt.Errorf("checking %s: %w", dir, err)
+	case !fi.IsDir():
+		return fmt.Errorf("refusing to remove secrets: %s is not a directory", dir)
+	}
+
+	removed := false
+	switch err := os.Remove(file); {
+	case err == nil:
+		removed = true
+	case errors.Is(err, fs.ErrNotExist):
+		// Carry on: an empty directory left by an earlier run should go too.
+	default:
+		return fmt.Errorf("removing %s: %w", file, err)
+	}
+
+	// The stdlib maps both ENOTEMPTY and EEXIST to fs.ErrExist.
+	if err := os.Remove(dir); err != nil &&
+		!errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fs.ErrExist) {
+		return fmt.Errorf("removing %s: %w", dir, err)
+	}
+
+	// Silent when the file was already absent so the per-cycle sweep for
+	// disabled services logs nothing in the steady state.
+	if removed {
+		log.Printf("sopsdecrypt: removed %s", file)
+	}
 	return nil
 }

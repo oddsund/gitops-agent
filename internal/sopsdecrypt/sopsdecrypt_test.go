@@ -69,3 +69,153 @@ func TestDecryptServiceSecrets_NoEncFile(t *testing.T) {
 		t.Error("expected no secrets.env to be written")
 	}
 }
+
+func writeFile(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("K=v\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func exists(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil
+}
+
+func TestRemoveServiceSecrets_RemovesFileAndDir(t *testing.T) {
+	base := t.TempDir()
+	writeFile(t, filepath.Join(base, "svc", "secrets.env"))
+
+	if err := RemoveServiceSecrets("svc", base); err != nil {
+		t.Fatal(err)
+	}
+	if exists(filepath.Join(base, "svc")) {
+		t.Error("service dir still present")
+	}
+	if !exists(base) {
+		t.Error("base dir was removed")
+	}
+}
+
+func TestRemoveServiceSecrets_NotExistIsSuccess(t *testing.T) {
+	base := t.TempDir()
+	if err := RemoveServiceSecrets("svc", base); err != nil {
+		t.Fatalf("no dir: %v", err)
+	}
+
+	if err := os.Mkdir(filepath.Join(base, "svc"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveServiceSecrets("svc", base); err != nil {
+		t.Fatalf("empty dir: %v", err)
+	}
+	if exists(filepath.Join(base, "svc")) {
+		t.Error("empty leftover dir not removed")
+	}
+}
+
+func TestRemoveServiceSecrets_KeepsDirWithOtherFile(t *testing.T) {
+	base := t.TempDir()
+	writeFile(t, filepath.Join(base, "svc", "secrets.env"))
+	writeFile(t, filepath.Join(base, "svc", "other"))
+
+	if err := RemoveServiceSecrets("svc", base); err != nil {
+		t.Fatal(err)
+	}
+	if exists(filepath.Join(base, "svc", "secrets.env")) {
+		t.Error("secrets.env still present")
+	}
+	if !exists(filepath.Join(base, "svc", "other")) {
+		t.Error("other file was deleted")
+	}
+}
+
+func TestRemoveServiceSecrets_RejectsTraversal(t *testing.T) {
+	root := t.TempDir()
+	base := filepath.Join(root, "run")
+	if err := os.Mkdir(base, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	canaries := []string{
+		filepath.Join(root, "canary", "secrets.env"),
+		filepath.Join(root, "secrets.env"),
+	}
+	for _, c := range canaries {
+		writeFile(t, c)
+	}
+
+	for _, name := range []string{"../canary", "..", ".", "", "a/b", "/abs", `a\b`, "a\x00b"} {
+		if err := RemoveServiceSecrets(name, base); err == nil {
+			t.Errorf("name %q: want error, got nil", name)
+		}
+	}
+	if err := RemoveServiceSecrets("svc", ""); err == nil {
+		t.Error("empty base: want error, got nil")
+	}
+	for _, c := range canaries {
+		if !exists(c) {
+			t.Errorf("canary %s was deleted", c)
+		}
+	}
+}
+
+func TestRemoveServiceSecrets_OtherServiceUntouched(t *testing.T) {
+	base := t.TempDir()
+	writeFile(t, filepath.Join(base, "one", "secrets.env"))
+	writeFile(t, filepath.Join(base, "two", "secrets.env"))
+
+	if err := RemoveServiceSecrets("one", base); err != nil {
+		t.Fatal(err)
+	}
+	if !exists(filepath.Join(base, "two", "secrets.env")) {
+		t.Error("other service's secrets were deleted")
+	}
+}
+
+func TestRemoveServiceSecrets_FileRemovalFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	base := t.TempDir()
+	dir := filepath.Join(base, "svc")
+	writeFile(t, filepath.Join(dir, "secrets.env"))
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	if err := RemoveServiceSecrets("svc", base); err == nil {
+		t.Fatal("want error, got nil")
+	}
+	if !exists(dir) {
+		t.Error("dir removed despite file removal failure")
+	}
+}
+
+func TestRemoveServiceSecrets_RefusesSymlinkedServiceDir(t *testing.T) {
+	root := t.TempDir()
+	base := filepath.Join(root, "run")
+	outside := filepath.Join(root, "outside")
+	if err := os.Mkdir(base, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	canary := filepath.Join(outside, "secrets.env")
+	writeFile(t, canary)
+	link := filepath.Join(base, "svc")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+
+	if err := RemoveServiceSecrets("svc", base); err == nil {
+		t.Fatal("want error, got nil")
+	}
+	if !exists(canary) {
+		t.Error("canary behind symlink was deleted")
+	}
+	if !exists(link) {
+		t.Error("symlink was removed")
+	}
+}
