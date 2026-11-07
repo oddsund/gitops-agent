@@ -8,7 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -37,6 +37,7 @@ func main() {
 	flag.Usage = printDaemonUsage
 	configPath := flag.String("config", "/etc/gitops-agent/config.toml", "path to config.toml")
 	showVersion := flag.Bool("version", false, "print the version and exit")
+	logLevel := flag.String("log-level", envOr("GITOPS_AGENT_LOG_LEVEL", "info"), "log level: debug, info, warn or error (env GITOPS_AGENT_LOG_LEVEL)")
 	flag.Parse()
 
 	if *showVersion {
@@ -44,16 +45,30 @@ func main() {
 		return
 	}
 
-	log.Printf("gitops-agent starting up, version %s, config: %s", version, *configPath)
+	lvl, err := parseLevel(*logLevel)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "gitops-agent: invalid log level %q (from -log-level or GITOPS_AGENT_LOG_LEVEL): %v\n", *logLevel, err)
+		os.Exit(2)
+	}
+	logger := newLogger(os.Stderr, lvl, os.Getenv("JOURNAL_STREAM") != "")
+	// Only main sets the default: it routes stray stdlib log output from
+	// libraries (go-git, sops) through the same handler. No agent package
+	// reads slog.Default().
+	slog.SetDefault(logger)
+
+	logger.Info("gitops-agent starting up", "version", version, "path", *configPath)
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
-		log.Fatalf("loading config: %v", err)
+		logger.Error("loading config", "error", err)
+		os.Exit(1)
 	}
+	logger.Info("config loaded", "path", *configPath)
 
 	auth, err := gitsync.SSHAuth(cfg.Sops.SSHKeyPath)
 	if err != nil {
-		log.Fatalf("loading SSH key: %v", err)
+		logger.Error("loading SSH key", "error", err)
+		os.Exit(1)
 	}
 
 	// SIGTERM/SIGINT cancel the loop so `systemctl restart` doesn't
@@ -63,12 +78,13 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 	reloadCh := make(chan struct{}, 1)
-	go watchSIGHUP(ctx, reloadCh)
+	go watchSIGHUP(ctx, logger, reloadCh)
 
 	tracker := statusserver.NewTracker(version, time.Now())
-	startStatusServer(ctx, cfg.Status.ListenAddr, tracker)
+	startStatusServer(ctx, logger.With("component", "status"), cfg.Status.ListenAddr, tracker)
 
 	r := &reconcile.Reconciler{
+		Log: logger,
 		Config: reconcile.Config{
 			RepoURL:            cfg.Git.RepoURL,
 			Branch:             cfg.Git.Branch,
@@ -80,20 +96,21 @@ func main() {
 			FullReconcileEvery: time.Duration(cfg.Git.FullReconcileIntervalSeconds) * time.Second,
 		},
 		Syncer: gitSyncer{
-			cfg:  gitsync.Config{RepoURL: cfg.Git.RepoURL, Branch: cfg.Git.Branch, ClonePath: cfg.Git.ClonePath},
+			cfg:  gitsync.Config{RepoURL: cfg.Git.RepoURL, Branch: cfg.Git.Branch, ClonePath: cfg.Git.ClonePath, Log: logger.With("component", "gitsync")},
 			auth: auth,
 		},
 		Changes:    gitChanges{clonePath: cfg.Git.ClonePath},
 		Services:   manifestLoader{},
-		Decrypter:  sopsDecrypter{keyPath: cfg.Sops.SSHKeyPath, baseDir: sopsdecrypt.DefaultSecretsBaseDir},
-		Deployer:   composeDeployer{},
+		Decrypter:  sopsDecrypter{keyPath: cfg.Sops.SSHKeyPath, baseDir: sopsdecrypt.DefaultSecretsBaseDir, log: logger.With("component", "sopsdecrypt")},
+		Deployer:   composeDeployer{log: logger.With("component", "deploy")},
 		Tracker:    tracker,
 		StatusFile: statusserver.DefaultStatusFilePath,
 	}
 	if err := r.Run(ctx, reloadCh); err != nil {
-		log.Fatalf("gitops-agent: %v", err)
+		logger.Error("reconcile loop stopped", "error", err)
+		os.Exit(1)
 	}
-	log.Printf("gitops-agent: shutting down")
+	logger.Info("gitops-agent shutting down")
 }
 
 // printDaemonUsage is what -h prints. It lists the subcommands because
@@ -113,11 +130,11 @@ func printDaemonUsage() {
 // background. A failure to bind is logged, not fatal: the reconcile loop is
 // the agent's actual job, and losing the status page over it would be a
 // worse outage than the one it exists to report on.
-func startStatusServer(ctx context.Context, listenAddr string, tracker *statusserver.Tracker) {
+func startStatusServer(ctx context.Context, log *slog.Logger, listenAddr string, tracker *statusserver.Tracker) {
 	srv := &http.Server{Addr: listenAddr, Handler: tracker.Handler()}
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Printf("status server: %v", err)
+			log.Error("status server failed", "error", err)
 		}
 	}()
 	go func() {
@@ -125,16 +142,16 @@ func startStatusServer(ctx context.Context, listenAddr string, tracker *statusse
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
-			log.Printf("status server: shutdown: %v", err)
+			log.Warn("status server shutdown failed", "error", err)
 		}
 	}()
-	log.Printf("status page listening on %s", listenAddr)
+	log.Info("status page listening", "addr", listenAddr)
 }
 
 // watchSIGHUP turns every SIGHUP into a "reconcile now" nudge on reloadCh.
 // signal.Notify rather than NotifyContext: this has to fire repeatedly, and
 // NotifyContext is one-shot.
-func watchSIGHUP(ctx context.Context, reloadCh chan<- struct{}) {
+func watchSIGHUP(ctx context.Context, log *slog.Logger, reloadCh chan<- struct{}) {
 	hup := make(chan os.Signal, 1)
 	signal.Notify(hup, syscall.SIGHUP)
 	defer signal.Stop(hup)
@@ -144,7 +161,7 @@ func watchSIGHUP(ctx context.Context, reloadCh chan<- struct{}) {
 		case <-ctx.Done():
 			return
 		case <-hup:
-			log.Printf("received SIGHUP, reconciling now")
+			log.Info("received SIGHUP, reconciling now")
 			select {
 			case reloadCh <- struct{}{}:
 			default: // a reconcile is already pending, no need to queue another

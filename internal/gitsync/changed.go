@@ -46,18 +46,18 @@ func PathChanged(clonePath string, before, after plumbing.Hash, path string) (bo
 func subtreeHash(repo *git.Repository, commit plumbing.Hash, path string) (plumbing.Hash, error) {
 	c, err := repo.CommitObject(commit)
 	if err != nil {
-		return plumbing.ZeroHash, fmt.Errorf("reading commit %s: %w", short(commit), err)
+		return plumbing.ZeroHash, fmt.Errorf("reading commit %s: %w", Short(commit), err)
 	}
 	tree, err := c.Tree()
 	if err != nil {
-		return plumbing.ZeroHash, fmt.Errorf("reading tree of %s: %w", short(commit), err)
+		return plumbing.ZeroHash, fmt.Errorf("reading tree of %s: %w", Short(commit), err)
 	}
 	sub, err := tree.Tree(path)
 	if err != nil {
 		if errors.Is(err, object.ErrDirectoryNotFound) || errors.Is(err, object.ErrEntryNotFound) {
 			return plumbing.ZeroHash, nil
 		}
-		return plumbing.ZeroHash, fmt.Errorf("resolving %s in %s: %w", path, short(commit), err)
+		return plumbing.ZeroHash, fmt.Errorf("resolving %s in %s: %w", path, Short(commit), err)
 	}
 	return sub.Hash, nil
 }

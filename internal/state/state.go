@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 )
@@ -18,22 +18,30 @@ import (
 // service directory gitops-agent last deployed it from.
 type State map[string]string
 
+func logger(l *slog.Logger) *slog.Logger {
+	if l != nil {
+		return l
+	}
+	return slog.New(slog.DiscardHandler)
+}
+
 // Load reads the state file at path. A missing or corrupt file is not an
 // error: it's the normal case on a fresh install, and refusing to start
 // over it would make a single bad write brick the reconcile loop for
 // everything, not just teardown.
-func Load(path string) State {
+func Load(path string, log *slog.Logger) State {
+	l := logger(log)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
-			log.Printf("state: %s unreadable (%v), starting from empty state", path, err)
+			l.Warn("state file unreadable, starting from empty state", "path", path, "error", err)
 		}
 		return State{}
 	}
 
 	var st State
 	if err := json.Unmarshal(data, &st); err != nil {
-		log.Printf("state: %s is corrupt (%v), starting from empty state", path, err)
+		l.Warn("state file is corrupt, starting from empty state", "path", path, "error", err)
 		return State{}
 	}
 	if st == nil {

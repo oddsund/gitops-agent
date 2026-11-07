@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -157,6 +157,7 @@ type harness struct {
 	dep     *fakeDeployer
 	j       *journal
 	clock   *fakeClock
+	logs    *bytes.Buffer
 }
 
 func result(changed bool) gitsync.Result {
@@ -176,7 +177,9 @@ func svcs(specs ...string) *config.ServicesConfig {
 func newHarness(t *testing.T, manifest ...string) *harness {
 	t.Helper()
 	j := &journal{}
+	lg, logs := newTestLogger()
 	h := &harness{
+		logs:    logs,
 		syncer:  &fakeSyncer{steps: []syncStep{{res: result(false)}}},
 		changes: &fakeChanges{changed: map[string]bool{}},
 		loader:  &fakeLoader{cfg: svcs(manifest...)},
@@ -204,6 +207,7 @@ func newHarness(t *testing.T, manifest ...string) *harness {
 		Tracker:    statusserver.NewTracker("test", time.Time{}),
 		Now:        h.clock.now,
 		StatusFile: "",
+		Log:        lg,
 	}
 	return h
 }
@@ -223,7 +227,7 @@ func (h *harness) preloadState(t *testing.T, st state.State) {
 	}
 }
 
-func (h *harness) state() state.State { return state.Load(h.r.Config.StatePath) }
+func (h *harness) state() state.State { return state.Load(h.r.Config.StatePath, nil) }
 
 func svcStatus(t *testing.T, tr *statusserver.Tracker, name string) statusserver.ServiceStatus {
 	t.Helper()
@@ -236,14 +240,20 @@ func svcStatus(t *testing.T, tr *statusserver.Tracker, name string) statusserver
 	return statusserver.ServiceStatus{}
 }
 
-func captureLog(t *testing.T) *bytes.Buffer {
-	t.Helper()
+// newTestLogger returns a logger writing logfmt to buf with no time attr,
+// at Debug so tests see every level.
+func newTestLogger() (*slog.Logger, *bytes.Buffer) {
 	var buf bytes.Buffer
-	oldW, oldF := log.Writer(), log.Flags()
-	log.SetOutput(&buf)
-	log.SetFlags(0)
-	t.Cleanup(func() { log.SetOutput(oldW); log.SetFlags(oldF) })
-	return &buf
+	h := slog.NewTextHandler(&buf, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+		ReplaceAttr: func(g []string, a slog.Attr) slog.Attr {
+			if len(g) == 0 && a.Key == slog.TimeKey {
+				return slog.Attr{}
+			}
+			return a
+		},
+	})
+	return slog.New(h), &buf
 }
 
 func assertJournal(t *testing.T, h *harness, want ...string) {
@@ -318,7 +328,6 @@ func TestRunOnce_LoadsManifestFromClone(t *testing.T) {
 }
 
 func TestRunOnce_NoManifestFirstCycle_DeploysNothing(t *testing.T) {
-	buf := captureLog(t)
 	h := newHarness(t)
 	h.loader.cfg, h.loader.err = nil, errLoad
 	pre := state.State{"old": "/clone/old"}
@@ -334,13 +343,12 @@ func TestRunOnce_NoManifestFirstCycle_DeploysNothing(t *testing.T) {
 		t.Errorf("tracker has %d services, want 0", n)
 	}
 	assertState(t, h, pre)
-	if !strings.Contains(buf.String(), "nothing to deploy") {
-		t.Errorf("log lacks 'nothing to deploy': %q", buf.String())
+	if out := h.logs.String(); !strings.Contains(out, "nothing to deploy") || !strings.Contains(out, "level=WARN") {
+		t.Errorf("log lacks a WARN 'nothing to deploy': %q", out)
 	}
 }
 
 func TestRunOnce_BrokenManifestKeepsLastKnownGood(t *testing.T) {
-	buf := captureLog(t)
 	h := newHarness(t, "a:apps/a:true", "b:apps/b:true")
 	_, err := h.cycle(t, false)
 	mustNoErr(t, err)
@@ -351,8 +359,8 @@ func TestRunOnce_BrokenManifestKeepsLastKnownGood(t *testing.T) {
 	_, err = h.cycle(t, false)
 	mustNoErr(t, err)
 	assertJournal(t, h, "decrypt:a", "deploy:/clone/apps/a", "decrypt:b", "deploy:/clone/apps/b")
-	if !strings.Contains(buf.String(), "keeping last-known-good") {
-		t.Errorf("log lacks 'keeping last-known-good': %q", buf.String())
+	if out := h.logs.String(); !strings.Contains(out, "keeping last-known-good") || !strings.Contains(out, "level=WARN") || !strings.Contains(out, "path=") {
+		t.Errorf("log lacks a WARN 'keeping last-known-good' with path: %q", out)
 	}
 }
 
@@ -467,17 +475,16 @@ func TestRunOnce_JoinsAllErrors(t *testing.T) {
 }
 
 func TestRunOnce_SkipsUpToDateServices(t *testing.T) {
-	buf := captureLog(t)
 	h := newHarness(t, "a:apps/a:true", "b:apps/b:true")
 	_, err := h.cycle(t, false)
 	mustNoErr(t, err)
 	before := svcStatus(t, h.r.Tracker, "a").LastAttempt
-	if strings.Contains(buf.String(), "cycle complete") {
-		t.Errorf("summary logged with nothing skipped: %q", buf.String())
+	if strings.Contains(h.logs.String(), "cycle complete") {
+		t.Errorf("summary logged with nothing skipped: %q", h.logs.String())
 	}
 
 	h.j.reset()
-	buf.Reset()
+	h.logs.Reset()
 	changed, err := h.cycle(t, false)
 	mustNoErr(t, err)
 	if changed {
@@ -490,8 +497,8 @@ func TestRunOnce_SkipsUpToDateServices(t *testing.T) {
 	if len(h.changes.paths) != 0 {
 		t.Errorf("detector called: %v", h.changes.paths)
 	}
-	if !strings.Contains(buf.String(), "0 deployed, 2 already up to date") {
-		t.Errorf("log = %q", buf.String())
+	if out := h.logs.String(); !strings.Contains(out, "deployed=0") || !strings.Contains(out, "up_to_date=2") {
+		t.Errorf("log = %q", h.logs.String())
 	}
 }
 
@@ -547,32 +554,31 @@ func TestRunOnce_ChangeDetectorSkippedForNeverDeployedService(t *testing.T) {
 }
 
 func TestRunOnce_FullReconcileTimer(t *testing.T) {
-	buf := captureLog(t)
 	h := newHarness(t, "a:apps/a:true", "b:apps/b:true")
 	const full = "periodic full reconcile"
 
 	_, err := h.cycle(t, false)
 	mustNoErr(t, err)
-	if !strings.Contains(buf.String(), full) {
+	if !strings.Contains(h.logs.String(), full) {
 		t.Error("cycle 1 not a full reconcile")
 	}
 
 	h.j.reset()
-	buf.Reset()
+	h.logs.Reset()
 	h.clock.advance(time.Hour - time.Second)
 	_, err = h.cycle(t, false)
 	mustNoErr(t, err)
 	assertJournal(t, h)
-	if strings.Contains(buf.String(), full) {
+	if strings.Contains(h.logs.String(), full) {
 		t.Error("cycle 2 was a full reconcile")
 	}
 
-	buf.Reset()
+	h.logs.Reset()
 	h.clock.advance(time.Second)
 	_, err = h.cycle(t, false)
 	mustNoErr(t, err)
 	assertJournal(t, h, "decrypt:a", "deploy:/clone/apps/a", "decrypt:b", "deploy:/clone/apps/b")
-	if !strings.Contains(buf.String(), full) {
+	if !strings.Contains(h.logs.String(), full) {
 		t.Error("cycle 3 not a full reconcile")
 	}
 }
@@ -860,14 +866,13 @@ func TestRun_EmptyStatusFileSkipsWrite(t *testing.T) {
 }
 
 func TestRun_ActiveTransitionLogged(t *testing.T) {
-	buf := captureLog(t)
 	h := newHarness(t, "a:apps/a:true")
 	h.syncer.steps = []syncStep{{res: result(true)}}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	mustNoErr(t, h.r.Run(ctx, nil))
-	if !strings.Contains(buf.String(), "new commits: reconciling every") {
-		t.Errorf("log = %q", buf.String())
+	if !strings.Contains(h.logs.String(), "new commits") || !strings.Contains(h.logs.String(), "interval=15s") {
+		t.Errorf("log = %q", h.logs.String())
 	}
 }
 
@@ -1014,4 +1019,120 @@ func TestRunOnce_ReEnabledServiceNotSweptAndRedecrypted(t *testing.T) {
 	mustNoErr(t, err)
 	assertRemoved(t, h)
 	assertJournal(t, h, "decrypt:a", "deploy:/clone/apps/a")
+}
+
+func TestRunOnce_FailureLogsErrorWithService(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(h *harness)
+		msg   string
+		errAs string
+	}{
+		{"deploy", func(h *harness) { h.dep.deployFail["/clone/apps/a"] = errDeploy }, "deploy failed", `error="deploy boom"`},
+		{"decrypt", func(h *harness) { h.dec.failFor["a"] = errDecrypt }, "decrypting secrets failed", `error="decrypt boom"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, "a:apps/a:true")
+			tc.setup(h)
+			if _, err := h.cycle(t, true); err == nil {
+				t.Fatal("err = nil, want failure")
+			}
+			assertLogLine(t, h, `msg="`+tc.msg+`"`, "level=ERROR", "service=a", "cycle=1", tc.errAs)
+		})
+	}
+}
+
+func TestRunOnce_TeardownFailureLogsErrorWithService(t *testing.T) {
+	h := newHarness(t, "b:apps/b:true")
+	h.preloadState(t, state.State{"b": "/clone/apps/b"})
+	h.loader.cfg = svcs("b:apps/b:false")
+	h.dep.downFail["/clone/apps/b"] = errDown
+	if _, err := h.cycle(t, true); err == nil {
+		t.Fatal("err = nil, want failure")
+	}
+	assertLogLine(t, h, `msg="tearing down failed"`, "level=ERROR", "service=b", "cycle=1", `error="down boom"`)
+}
+
+// assertLogLine finds the line holding msg and checks every want on that one
+// line, so the attrs cannot come from different lines.
+func assertLogLine(t *testing.T, h *harness, msg string, want ...string) {
+	t.Helper()
+	for _, line := range strings.Split(h.logs.String(), "\n") {
+		if !strings.Contains(line, msg) {
+			continue
+		}
+		for _, w := range want {
+			if !strings.Contains(line, w) {
+				t.Errorf("line %q lacks %q", line, w)
+			}
+		}
+		return
+	}
+	t.Errorf("no log line with %s in:\n%s", msg, h.logs.String())
+}
+
+func TestRunOnce_CycleAttrIncrements(t *testing.T) {
+	h := newHarness(t, "a:apps/a:true")
+	_, err := h.cycle(t, false)
+	mustNoErr(t, err)
+	if !strings.Contains(h.logs.String(), "cycle=1") || strings.Contains(h.logs.String(), "cycle=2") {
+		t.Errorf("first cycle log = %q", h.logs.String())
+	}
+	h.logs.Reset()
+	_, err = h.cycle(t, false)
+	mustNoErr(t, err)
+	assertLogLine(t, h, `msg="cycle complete"`, "cycle=2")
+}
+
+func TestRunOnce_NilLogDiscards(t *testing.T) {
+	h := newHarness(t, "a:apps/a:true")
+	h.r.Log = nil
+	_, err := h.cycle(t, true)
+	mustNoErr(t, err)
+}
+
+func TestRunOnce_OtherFailureRowsLogLevelServiceAndCycle(t *testing.T) {
+	t.Run("teardown secrets removal", func(t *testing.T) {
+		h := newHarness(t, "b:apps/b:false")
+		h.preloadState(t, state.State{"b": "/clone/apps/b"})
+		h.dec.removeFail["b"] = errRemove
+		_, _ = h.cycle(t, true)
+		assertLogLine(t, h, `msg="removing decrypted secrets failed"`, "level=ERROR", "service=b", "cycle=1", `error="remove boom"`)
+	})
+	t.Run("disabled sweep secrets removal", func(t *testing.T) {
+		h := newHarness(t, "c:apps/c:false")
+		h.dec.removeFail["c"] = errRemove
+		_, _ = h.cycle(t, true)
+		assertLogLine(t, h, `msg="removing decrypted secrets failed"`, "level=ERROR", "service=c", "cycle=1", `error="remove boom"`)
+	})
+	t.Run("state save", func(t *testing.T) {
+		h := newHarness(t, "a:apps/a:true")
+		blocker := filepath.Join(t.TempDir(), "file")
+		if err := os.WriteFile(blocker, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		h.r.Config.StatePath = filepath.Join(blocker, "state.json")
+		_, _ = h.cycle(t, false)
+		assertLogLine(t, h, `msg="saving deploy state failed"`, "level=ERROR", "cycle=1", "path=")
+	})
+	t.Run("path changed warn", func(t *testing.T) {
+		h := newHarness(t, "a:apps/a:true")
+		_, err := h.cycle(t, false)
+		mustNoErr(t, err)
+		h.logs.Reset()
+		h.changes.err = errChange
+		_, err = h.cycle(t, true)
+		mustNoErr(t, err)
+		assertLogLine(t, h, "couldn't tell whether the service changed", "level=WARN", "service=a", "cycle=2", `error="change boom"`)
+	})
+}
+
+func TestServiceNeedsDeploy_NilLoggerDoesNotPanic(t *testing.T) {
+	h := newHarness(t, "a:apps/a:true")
+	h.r.Log = nil
+	h.changes.err = errChange
+	if !h.r.serviceNeedsDeploy(result(true), config.Service{Name: "a", Path: "apps/a"}) {
+		t.Error("want fail-open true")
+	}
 }

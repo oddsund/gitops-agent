@@ -5,7 +5,6 @@ package config
 
 import (
 	"fmt"
-	"log"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -113,7 +112,6 @@ func Load(path string) (*AgentConfig, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config %s: %w", path, err)
 	}
-	log.Printf("config: loaded %s", path)
 	return &cfg, nil
 }
 
@@ -172,7 +170,6 @@ func LoadServices(path string) (*ServicesConfig, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid services manifest %s: %w", path, err)
 	}
-	log.Printf("config: loaded %s (%d service(s) configured, %d enabled)", path, len(cfg.Services), len(cfg.EnabledServices()))
 	return &cfg, nil
 }
 

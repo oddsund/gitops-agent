@@ -109,7 +109,8 @@ The cadence is adaptive (`internal/schedule`):
   returns to the idle cadence.
 
 The agent logs the change between cadences, not every poll. At the active
-interval, one line for every poll is one line every 15 seconds.
+interval, one line for every poll is one line every 15 seconds. A poll that
+finds nothing new is logged at `debug` level only.
 
 ## Signals
 
@@ -123,3 +124,32 @@ systemctl kill -s HUP gitops-agent     # under systemd
 `SIGTERM` and `SIGINT` start a clean shutdown. The agent starts no new
 cycle. When the current wait ends, the agent exits. Thus a restart does
 not cut a deploy in half.
+
+## Reading the log
+
+The agent writes `key=value` lines to stderr. Under systemd they go to the
+journal:
+
+```bash
+journalctl -u gitops-agent -o cat | grep service=demoapp
+journalctl -u gitops-agent -o json | jq 'select(.MESSAGE | contains("level=ERROR"))'
+```
+
+Example:
+
+```text
+level=INFO msg=deployed cycle=17 service=demoapp path=/opt/gitops-agent/repo/apps/demoapp duration=4.2s
+level=ERROR msg="deploy failed" cycle=18 service=demoapp path=/opt/gitops-agent/repo/apps/demoapp duration=1.1s error="docker up (...): exit status 1: ..."
+```
+
+Every line has a `level` (`DEBUG`, `INFO`, `WARN` or `ERROR`) and a `msg`.
+A line about one service has `service=<name>`, and a line from one cycle has
+`cycle=<n>`; `cycle` counts from 1 at each start. Lines from `gitsync`,
+`sopsdecrypt`, `deploy` and `state` have `component=<name>`.
+
+Releases before this change wrote free text such as `deployed demoapp
+(/path)` or `gitsync: synced ...`. If a script, alert or log shipper matches
+those lines, change it to match `msg=deployed` and `service=demoapp`
+instead. The messages keep their wording where they can, but the data moved
+into fields. `journalctl -p err` does not select `level=ERROR` lines: all
+agent lines have journal priority `info`. Select on the text instead.

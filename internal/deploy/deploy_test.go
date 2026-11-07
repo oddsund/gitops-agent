@@ -35,7 +35,7 @@ func TestDeploy_InvokesDockerComposeUp(t *testing.T) {
 
 	argsFile := stubDocker(t, 0)
 
-	if err := Deploy(serviceDir); err != nil {
+	if err := Deploy(serviceDir, nil); err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
 
@@ -65,7 +65,7 @@ func TestDeploy_SucceedsWithComposeOutput(t *testing.T) {
 	}
 	t.Setenv("PATH", stubDir)
 
-	if err := Deploy(serviceDir); err != nil {
+	if err := Deploy(serviceDir, nil); err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
 }
@@ -78,7 +78,7 @@ func TestDeploy_PropagatesFailure(t *testing.T) {
 
 	stubDocker(t, 1)
 
-	if err := Deploy(serviceDir); err == nil {
+	if err := Deploy(serviceDir, nil); err == nil {
 		t.Fatal("expected error when docker compose exits non-zero")
 	}
 }
@@ -91,7 +91,7 @@ func TestDown_InvokesDockerComposeDown(t *testing.T) {
 
 	argsFile := stubDocker(t, 0)
 
-	if err := Down(serviceDir); err != nil {
+	if err := Down(serviceDir, nil); err != nil {
 		t.Fatalf("Down: %v", err)
 	}
 
@@ -113,7 +113,7 @@ func TestDown_PropagatesFailure(t *testing.T) {
 
 	stubDocker(t, 1)
 
-	if err := Down(serviceDir); err == nil {
+	if err := Down(serviceDir, nil); err == nil {
 		t.Fatal("expected error when docker compose down exits non-zero")
 	}
 }
@@ -131,7 +131,7 @@ func TestDown_MissingComposeFilePropagatesError(t *testing.T) {
 	}
 	t.Setenv("PATH", stubDir)
 
-	if err := Down(serviceDir); err == nil {
+	if err := Down(serviceDir, nil); err == nil {
 		t.Fatal("expected error when compose.yml is missing")
 	}
 }
@@ -154,7 +154,7 @@ func TestDeployWithTimeout_KillsHungInvocation(t *testing.T) {
 	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	start := time.Now()
-	err := DeployWithTimeout(serviceDir, 200*time.Millisecond)
+	err := DeployWithTimeout(serviceDir, 200*time.Millisecond, nil)
 	elapsed := time.Since(start)
 
 	if err == nil {
