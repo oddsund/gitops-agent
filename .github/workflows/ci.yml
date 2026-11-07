@@ -24,6 +24,15 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
 
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: shellcheck
+        run: git ls-files '*.sh' '*.bash' | xargs shellcheck
+      - name: install.sh tests
+        run: bash scripts/install_test.bash
+
   build:
     needs: test
     runs-on: ubuntu-latest
