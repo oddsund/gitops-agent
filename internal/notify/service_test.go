@@ -249,3 +249,33 @@ func TestNew_BadPasswordFile(t *testing.T) {
 	}
 	s.Close(time.Second)
 }
+
+func TestService_ManifestBrokenAndFixed(t *testing.T) {
+	f := newFakeSMTP(t, nil)
+	c := &clock{t0}
+	cfg := testConfig()
+	cfg.Host, cfg.Port, cfg.TLS, cfg.MinInterval = "127.0.0.1", f.port(), "none", time.Hour
+	m := newMailer(cfg, "")
+	log, _ := bufLogger()
+	s := newService(cfg, log, c.now, m, m.redact)
+	defer s.Close(2 * time.Second)
+
+	broken := State{Key: Key{Kind: KindManifest}, Failing: true, Stage: "manifest"}
+	fixed := State{Key: Key{Kind: KindManifest}, Stage: "manifest"}
+	s.Observe(obsOf(broken))
+	waitFor(t, "failing mail", func() bool { return len(f.messages()) == 1 })
+	if !strings.Contains(f.messages()[0].data, "Subject: [gitops-agent] box1: services.toml is failing") {
+		t.Errorf("data = %q", f.messages()[0].data)
+	}
+	s.Observe(obsOf(fixed))
+	waitFor(t, "recovery mail", func() bool { return len(f.messages()) == 2 })
+	if !strings.Contains(f.messages()[1].data, "services.toml recovered") {
+		t.Errorf("data = %q", f.messages()[1].data)
+	}
+	c.advance(time.Second)
+	s.Observe(obsOf(broken)) // inside MinInterval: held
+	time.Sleep(100 * time.Millisecond)
+	if n := len(f.messages()); n != 2 {
+		t.Errorf("messages = %d, want 2", n)
+	}
+}

@@ -136,3 +136,28 @@ func TestUntil(t *testing.T) {
 		t.Errorf("until(past) = %q, want 'any moment now'", got)
 	}
 }
+
+func TestHandleIndex_ManifestError(t *testing.T) {
+	get := func(tr *Tracker) string {
+		rr := httptest.NewRecorder()
+		tr.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+		return rr.Body.String()
+	}
+	tr := NewTracker("dev", time.Now())
+	if strings.Contains(get(tr), "services.toml:") {
+		t.Error("manifest line shown while the manifest is fine")
+	}
+	tr.ManifestResult(errors.New(`bad <script>alert(1)</script>`), true)
+	body := get(tr)
+	if !strings.Contains(body, "services.toml: bad &lt;script&gt;") || strings.Contains(body, "<script>alert") {
+		t.Errorf("manifest error missing or not escaped:\n%s", body)
+	}
+	if !strings.Contains(body, "keeping the last good list") || strings.Contains(body, "nothing is deployed") {
+		t.Errorf("wrong wording with a good list:\n%s", body)
+	}
+	tr.ManifestResult(errors.New("bad"), false)
+	body = get(tr)
+	if !strings.Contains(body, "no valid list has been loaded yet, nothing is deployed") || strings.Contains(body, "keeping the last good list") {
+		t.Errorf("wrong wording without a list:\n%s", body)
+	}
+}

@@ -7,6 +7,7 @@ package statusserver
 
 import (
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -39,6 +40,12 @@ type Status struct {
 	LastSyncSuccess time.Time `json:"last_sync_success,omitzero"`
 	CommitHash      string    `json:"commit_hash,omitempty"`
 	LastSyncError   string    `json:"last_sync_error,omitempty"`
+
+	// ManifestError is the first line of the last services.toml load error,
+	// capped. ManifestNoList is set with it when no valid list has ever been
+	// loaded, so nothing is deployed at all.
+	ManifestError  string `json:"manifest_error,omitempty"`
+	ManifestNoList bool   `json:"manifest_no_list,omitempty"`
 
 	Services []ServiceStatus `json:"services"`
 
@@ -102,6 +109,43 @@ func (t *Tracker) SyncResult(commitHash string, err error) {
 	t.status.LastSyncSuccess = time.Now()
 	t.status.CommitHash = commitHash
 	t.status.LastSyncError = ""
+}
+
+// ManifestResult records the outcome of loading services.toml this cycle.
+// A failure keeps the previous service list in use, so it is shown on its
+// own line rather than as a cycle error: it deliberately does not feed
+// CycleComplete or Healthy, because the cycle still succeeds with the
+// last-known-good list. As with every error given to the Tracker, err.Error()
+// must be safe to publish.
+//
+// The text comes from the repository (service names, paths), so only its
+// first line is kept, cut to maxManifestErrRunes: a push must not be able to
+// grow the page, status.json and the status file without bound. haveList says
+// whether an earlier load succeeded; without one the page says nothing is
+// deployed.
+func (t *Tracker) ManifestResult(err error, haveList bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if err != nil {
+		t.status.ManifestError = firstLineCapped(err.Error(), maxManifestErrRunes)
+		t.status.ManifestNoList = !haveList
+		return
+	}
+	t.status.ManifestError = ""
+	t.status.ManifestNoList = false
+}
+
+const maxManifestErrRunes = 300
+
+// firstLineCapped returns the first line of s as valid UTF-8, cut to max
+// runes and ending in "..." when cut.
+func firstLineCapped(s string, max int) string {
+	s, _, _ = strings.Cut(s, "\n")
+	s = strings.TrimRight(strings.ToValidUTF8(s, "\uFFFD"), "\r")
+	if r := []rune(s); len(r) > max {
+		return string(r[:max]) + "..."
+	}
+	return s
 }
 
 // SeenService records a service's current path/enabled state from the

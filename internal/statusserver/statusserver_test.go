@@ -1,7 +1,9 @@
 package statusserver
 
 import (
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -126,5 +128,59 @@ func TestTracker_SetNextCycle(t *testing.T) {
 	}
 	if !s.Active {
 		t.Error("Active = false, want true")
+	}
+}
+
+func TestTracker_ManifestResult(t *testing.T) {
+	tr := NewTracker("dev", time.Now())
+	tr.CycleComplete(nil)
+	if tr.Snapshot().ManifestError != "" {
+		t.Fatal("ManifestError set on a fresh tracker")
+	}
+	tr.ManifestResult(errors.New("invalid services manifest"), true)
+	if got := tr.Snapshot().ManifestError; got != "invalid services manifest" {
+		t.Errorf("ManifestError = %q", got)
+	}
+	if !tr.Snapshot().Healthy() {
+		t.Error("a manifest error must not make the cycle unhealthy")
+	}
+	b, err := json.Marshal(tr.Snapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"manifest_error":"invalid services manifest"`) {
+		t.Errorf("json = %s", b)
+	}
+	tr.ManifestResult(nil, true)
+	if got := tr.Snapshot().ManifestError; got != "" {
+		t.Errorf("ManifestError after success = %q", got)
+	}
+	b, _ = json.Marshal(tr.Snapshot())
+	if strings.Contains(string(b), "manifest_error") {
+		t.Errorf("json has manifest_error when unset: %s", b)
+	}
+}
+
+func TestTracker_ManifestResultBounded(t *testing.T) {
+	tr := NewTracker("dev", time.Now())
+	tr.ManifestResult(errors.New("first line\nsecond line\r\nthird"), true)
+	if got := tr.Snapshot().ManifestError; got != "first line" {
+		t.Errorf("multi-line: %q", got)
+	}
+	tr.ManifestResult(errors.New("name "+strings.Repeat("\u00e9", 10_000)), true)
+	got := tr.Snapshot().ManifestError
+	if n := len([]rune(got)); n != maxManifestErrRunes+3 || !strings.HasSuffix(got, "...") {
+		t.Errorf("long: %d runes, %q", n, got[:20])
+	}
+	tr.ManifestResult(errors.New("bad \xff byte"), false)
+	if got := tr.Snapshot().ManifestError; !strings.Contains(got, "\uFFFD") {
+		t.Errorf("invalid UTF-8 kept: %q", got)
+	}
+	if !tr.Snapshot().ManifestNoList {
+		t.Error("ManifestNoList not set")
+	}
+	tr.ManifestResult(nil, true)
+	if tr.Snapshot().ManifestNoList {
+		t.Error("ManifestNoList not cleared")
 	}
 }

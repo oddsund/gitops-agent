@@ -359,6 +359,9 @@ func TestRunOnce_BrokenManifestKeepsLastKnownGood(t *testing.T) {
 	_, err = h.cycle(t, false)
 	mustNoErr(t, err)
 	assertJournal(t, h, "decrypt:a", "deploy:/clone/apps/a", "decrypt:b", "deploy:/clone/apps/b")
+	if got := h.r.Tracker.Snapshot().ManifestError; !strings.Contains(got, errLoad.Error()) {
+		t.Errorf("ManifestError = %q", got)
+	}
 	if out := h.logs.String(); !strings.Contains(out, "keeping last-known-good") || !strings.Contains(out, "level=WARN") || !strings.Contains(out, "path=") {
 		t.Errorf("log lacks a WARN 'keeping last-known-good' with path: %q", out)
 	}

@@ -22,29 +22,30 @@ import (
 type Kind int
 
 const (
-	KindSync    Kind = iota // the git sync step, as a whole
-	KindService             // one service
+	KindSync     Kind = iota // the git sync step, as a whole
+	KindManifest             // services.toml, as a whole
+	KindService              // one service
 )
 
 // Key identifies something that can fail. A struct rather than strings so
 // a service literally named "git sync" cannot collide with the sync step.
 type Key struct {
 	Kind Kind
-	Name string // service name; empty for KindSync
+	Name string // service name; empty for KindSync and KindManifest
 }
 
 // State is one key's health as of the cycle that just finished.
 type State struct {
 	Key     Key
 	Failing bool
-	Stage   string // sync, decrypt, deploy, teardown; may be empty
+	Stage   string // sync, manifest, decrypt, deploy, teardown; may be empty
 	Err     string // raw error text; only used when IncludeError is set
 }
 
 // Observation is everything Service needs after one cycle.
 type Observation struct {
 	Commit string  // 12-char short commit, may be empty
-	States []State // sync first, then services that have been attempted
+	States []State // sync first, then the manifest, then services that have been attempted
 }
 
 // Config is what the daemon passes in. Plain values: notify does not import
