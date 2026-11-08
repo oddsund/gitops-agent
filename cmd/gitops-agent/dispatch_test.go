@@ -106,3 +106,14 @@ func TestDispatchSubcommandError(t *testing.T) {
 		t.Errorf("stderr = %q, want it to contain the subcommand's error", stderr.String())
 	}
 }
+
+func TestDispatch_NotifyTestRegistered(t *testing.T) {
+	if subcommands["notify-test"] == nil {
+		t.Fatal("notify-test is not registered")
+	}
+	var buf bytes.Buffer
+	usage(&buf)
+	if !slices.Contains(strings.Split(buf.String(), "\n"), "  notify-test") {
+		t.Errorf("usage = %q, want a line %q", buf.String(), "  notify-test")
+	}
+}

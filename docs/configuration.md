@@ -206,3 +206,29 @@ you get one email that lists all of them.
 The agent never opens a connection to a mail server the repository chooses.
 The server, the recipients and the password all come from the host's
 `config.toml`.
+
+### Test your settings
+
+To check the settings without breaking a service, run the command below as
+the user that runs the agent (the `User=` line of the systemd unit):
+
+    sudo -u "$(systemctl show -p User --value gitops-agent)" gitops-agent notify-test
+
+The `--value` option needs systemd 230 or newer. If the inner command
+prints an empty line, the unit has no `User=` line (or the host has no
+systemd). Look at the unit with `systemctl cat gitops-agent` and use the
+user that owns the password file.
+
+The command reads `config.toml`, reads the password file with the same
+rules as the agent, and sends one test email. It prints
+`notify-test: OK, the mail server accepted the test message` when the server
+took the message, or one line that names the step that failed (`connect`,
+`tls`, `starttls`, `auth`, `mail`, `rcpt` or `data`) and a short reason, for
+example `smtp auth: server replied 535`. It never prints the text the
+server sent, and never the password. An accepted message can still land in
+a spam folder, so check your mailbox too.
+
+The password file must belong to the user that runs the agent, so
+the agent never runs as root, and `notify-test` refuses to run as root. Use
+`-config PATH` for a config file in another place. The exit code is 0 on
+success and 1 on any failure.
