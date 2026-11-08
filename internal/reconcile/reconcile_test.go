@@ -444,6 +444,31 @@ func TestRunOnce_DecryptFailureRetriedNextCycle(t *testing.T) {
 	assertJournal(t, h, "decrypt:a", "deploy:/clone/apps/a")
 }
 
+// A service that deployed once is normally skipped when nothing changed. A
+// decrypt failure (for example a stale secrets.env that could not be
+// removed) must not leave it in that state, or nothing retries it.
+func TestRunOnce_DecryptFailureRetriedAfterSuccessfulDeploy(t *testing.T) {
+	h := newHarness(t, "a:apps/a:true")
+	_, err := h.cycle(t, false)
+	mustNoErr(t, err)
+
+	h.dec.failFor["a"] = errDecrypt
+	h.changes.changed["apps/a"] = true
+	h.j.reset()
+	_, err = h.cycle(t, true)
+	if !errors.Is(err, errDecrypt) {
+		t.Fatalf("err = %v, want errDecrypt", err)
+	}
+	assertJournal(t, h, "decrypt:a")
+
+	h.dec.failFor["a"] = nil
+	h.changes.changed["apps/a"] = false
+	h.j.reset()
+	_, err = h.cycle(t, false)
+	mustNoErr(t, err)
+	assertJournal(t, h, "decrypt:a", "deploy:/clone/apps/a")
+}
+
 func TestRunOnce_DeployFailureIsolated(t *testing.T) {
 	h := newHarness(t, "a:apps/a:true", "b:apps/b:true")
 	h.dep.deployFail["/clone/apps/a"] = errDeploy

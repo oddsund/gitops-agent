@@ -52,15 +52,23 @@ const DefaultSecretsBaseDir = "/run/gitops-agent"
 
 // DecryptServiceSecrets decrypts <serviceDir>/secrets.enc.env, if it
 // exists, and writes the plaintext to
-// <secretsBaseDir>/<serviceName>/secrets.env. It's a no-op for services
-// that don't have any encrypted secrets. serviceName must match the
-// service's `name` in services.toml -- that's also what the service's
-// compose.yml env_file entry must point at, see docs/secrets.md.
+// <secretsBaseDir>/<serviceName>/secrets.env. If the file does not exist,
+// any previously decrypted secrets.env for the service is removed (see
+// RemoveServiceSecrets); a service with neither is a no-op. After a nil
+// return, secrets.env exists if and only if secrets.enc.env does.
+// serviceName must match the service's `name` in services.toml -- that's
+// also what the service's compose.yml env_file entry must point at, see
+// docs/secrets.md.
 func DecryptServiceSecrets(serviceDir, serviceName, sshKeyPath, secretsBaseDir string, log *slog.Logger) error {
 	l := logger(log).With("service", serviceName)
 	encPath := filepath.Join(serviceDir, "secrets.enc.env")
 	if _, err := os.Stat(encPath); errors.Is(err, os.ErrNotExist) {
-		l.Info("no secrets.enc.env, nothing to decrypt (not an error, just a quiet service)", "path", serviceDir)
+		// The encrypted source is gone, so a plaintext left by an earlier
+		// decrypt is stale and must not keep feeding the service.
+		if err := RemoveServiceSecrets(serviceName, secretsBaseDir, log); err != nil {
+			return fmt.Errorf("removing stale secrets for %s: %w", serviceName, err)
+		}
+		l.Debug("no encrypted secrets for service", "path", serviceDir)
 		return nil
 	} else if err != nil {
 		return fmt.Errorf("checking %s: %w", encPath, err)

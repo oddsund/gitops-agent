@@ -52,6 +52,12 @@ services:
 The path must be absolute, because `/run/gitops-agent/<name>` is outside
 the git checkout.
 
+CAUTION: If you delete `secrets.enc.env`, also remove the `env_file:`
+entry, or mark it `required: false`. Otherwise `docker compose up` fails
+with "env file not found". The failure is intended: the agent does not
+keep running with secrets the repository no longer contains. Running
+containers are not stopped by this failure.
+
 ## Lifetime
 
 `/run/gitops-agent` is tmpfs. The systemd unit creates it with
@@ -65,11 +71,17 @@ CAUTION: If you run `docker compose up` by hand while the agent is
 stopped, the decrypted file is not there. A service that needs it fails to
 start.
 
-## Removing a service
+## Removing secrets
 
 The agent deletes `/run/gitops-agent/<name>/secrets.env` for a service in
-two cases:
+three cases:
 
+- You delete `secrets.enc.env` from a service that stays enabled. The
+  agent removes the old `secrets.env` the next time it deploys that
+  service. The deletion is a change to the service directory, so this
+  happens on the next sync. Running containers keep the old secret values
+  until they are recreated. Removing the file stops the next deploy from
+  using the old values; it does not change containers that already run.
 - The agent has just stopped the service's containers because it is no
   longer enabled, or because it is gone from `services.toml`.
 - The service is in `services.toml` with `enabled = false`. The agent
@@ -83,11 +95,8 @@ the agent tries again on the next cycle. The agent also removes the
 The agent never scans `/run/gitops-agent`. It removes files only for
 service names it knows from `services.toml` or from its own deploy state.
 
-The agent does not remove the file in these cases:
+The agent does not remove the file in this case:
 
-- You delete `secrets.enc.env` from a service that stays enabled. The old
-  `secrets.env` stays until the service is disabled or removed, or until
-  the host reboots. To clear it at once, delete it by hand.
 - You remove a service from `services.toml` and the agent fails to delete
   the file during that one cycle. The agent logs the error and does not
   try again for that name. The file is gone at the next reboot or
