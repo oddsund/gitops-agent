@@ -59,6 +59,11 @@ func (s Status) Healthy() bool {
 // Tracker is the agent's in-memory status, safe for concurrent use: the
 // reconcile loop writes to it from its own goroutine while the HTTP server
 // reads it from request goroutines.
+//
+// Error strings given to the Tracker are served verbatim by /status.json,
+// the HTML page and /healthz, written to the status file, and may be
+// mailed. Callers must pass errors whose Error() is safe to publish (see
+// internal/redact).
 type Tracker struct {
 	mu       sync.Mutex
 	status   Status

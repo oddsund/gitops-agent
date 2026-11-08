@@ -77,7 +77,13 @@ func (d sopsDecrypter) RemoveServiceSecrets(serviceName string) error {
 	return sopsdecrypt.RemoveServiceSecrets(serviceName, d.baseDir, d.log)
 }
 
-type composeDeployer struct{ log *slog.Logger }
+type composeDeployer struct {
+	log        *slog.Logger
+	secretsDir string
+}
 
-func (d composeDeployer) Deploy(dir string) error { return deploy.Deploy(dir, d.log) }
-func (d composeDeployer) Down(dir string) error   { return deploy.Down(dir, d.log) }
+func (d composeDeployer) run() deploy.Runner {
+	return deploy.Runner{Log: d.log, SecretsDir: d.secretsDir}
+}
+func (d composeDeployer) Deploy(dir string) error { return d.run().Deploy(dir) }
+func (d composeDeployer) Down(dir string) error   { return d.run().Down(dir) }

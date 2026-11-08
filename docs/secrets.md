@@ -50,7 +50,8 @@ services:
 ```
 
 The path must be absolute, because `/run/gitops-agent/<name>` is outside
-the git checkout.
+the git checkout. If compose cannot parse the file, the compose message is in
+the journal with known values replaced by `***`.
 
 CAUTION: If you delete `secrets.enc.env`, also remove the `env_file:`
 entry, or mark it `required: false`. Otherwise `docker compose up` fails

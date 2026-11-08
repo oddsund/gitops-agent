@@ -30,11 +30,36 @@ cannot change who gets mail, which server the agent talks to, or whether
 the feature is on. Text that comes from the repository (service names) or
 from docker (error text) is put in the mail body only after control
 characters are removed, and is never put in a header without that cleaning.
-Error text is left out unless `include_error` is on. The password is read
+Error text is left out unless `include_error` is on. With `include_error`
+on, docker errors are the fixed summary described in
+[Compose errors and secret values](#compose-errors-and-secret-values), not
+docker's output. The password is read
 once from `password_file`, which the agent refuses to use if group or
 others can read it, and the agent never logs it. The agent logs in only
 over TLS and verifies the server certificate; there is no option to turn
 verification off.
+
+### Compose errors and secret values
+
+`docker compose` can quote a decrypted value in its error, for example when
+it cannot parse an `env_file`.
+
+- The status page, `/status.json`, `/healthz` and email never show that
+  text. They show a fixed summary, for example
+  `docker compose up failed with exit code 1; see the journal`.
+- The journal keeps the compose stderr (the last 2 KiB) so you can fix the
+  problem. Known secret values from `/run/gitops-agent/*/secrets.env` are
+  replaced with `***` first. Values shorter than 6 characters are not
+  replaced, because they would also hit ordinary words and numbers.
+- The limit: the scrub removes whole values. If compose quotes only a
+  fragment of a value, the fragment is not found. Treat the journal as
+  sensitive, as you treat `docker inspect`, and do not ship it to a place
+  that is less trusted than the host. A secret that reaches compose by
+  another route (a literal in `compose.yml`, the host environment) is not
+  known to the agent.
+- Decrypt errors (from sops) are shown as they are. They contain no
+  decrypted values. The one exception to consider is the MAC value in an
+  integrity failure, which is derived from the decrypted values.
 
 ### Secrets stay in tmpfs
 

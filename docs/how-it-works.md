@@ -139,7 +139,7 @@ Example:
 
 ```text
 level=INFO msg=deployed cycle=17 service=demoapp path=/opt/gitops-agent/repo/apps/demoapp duration=4.2s
-level=ERROR msg="deploy failed" cycle=18 service=demoapp path=/opt/gitops-agent/repo/apps/demoapp duration=1.1s error="docker up (...): exit status 1: ..."
+level=ERROR msg="deploy failed" cycle=18 service=demoapp path=/opt/gitops-agent/repo/apps/demoapp duration=1.1s error="docker compose up failed with exit code 1; see the journal" detail="...compose output, secret values replaced by ***"
 ```
 
 Every line has a `level` (`DEBUG`, `INFO`, `WARN` or `ERROR`) and a `msg`.
