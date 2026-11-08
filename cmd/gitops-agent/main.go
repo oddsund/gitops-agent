@@ -103,7 +103,7 @@ func main() {
 		Changes:    gitChanges{clonePath: cfg.Git.ClonePath},
 		Services:   manifestLoader{},
 		Decrypter:  sopsDecrypter{keyPath: cfg.Sops.SSHKeyPath, baseDir: sopsdecrypt.DefaultSecretsBaseDir, log: logger.With("component", "sopsdecrypt")},
-		Deployer:   composeDeployer{log: logger.With("component", "deploy")},
+		Deployer:   composeDeployer{log: logger.With("component", "deploy"), secretsDir: sopsdecrypt.DefaultSecretsBaseDir},
 		Tracker:    tracker,
 		StatusFile: statusserver.DefaultStatusFilePath,
 	}

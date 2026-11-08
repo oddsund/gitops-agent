@@ -16,6 +16,7 @@ import (
 	"github.com/oddsund/gitops-agent/internal/config"
 	"github.com/oddsund/gitops-agent/internal/gitsync"
 	"github.com/oddsund/gitops-agent/internal/notify"
+	"github.com/oddsund/gitops-agent/internal/redact"
 	"github.com/oddsund/gitops-agent/internal/schedule"
 	"github.com/oddsund/gitops-agent/internal/state"
 	"github.com/oddsund/gitops-agent/internal/statusserver"
@@ -261,7 +262,7 @@ func (r *Reconciler) RunOnce(ctx context.Context) (bool, error) {
 		svcLog.Info("no longer enabled, tearing down", "path", serviceDir)
 		r.Tracker.ServiceAttempt(name)
 		if err := r.Deployer.Down(serviceDir); err != nil {
-			svcLog.Error("tearing down failed", "path", serviceDir, "error", err)
+			svcLog.Error("tearing down failed", append([]any{"path", serviceDir, "error", err}, errDetail(err)...)...)
 			errs = append(errs, fmt.Errorf("tearing down %s: %w", name, err))
 			r.Tracker.ServiceResult(name, err)
 			r.stage[name] = "teardown"
@@ -324,7 +325,7 @@ func (r *Reconciler) RunOnce(ctx context.Context) (bool, error) {
 
 		svcLog.Info("running docker compose up")
 		if err := r.Deployer.Deploy(serviceDir); err != nil {
-			svcLog.Error("deploy failed", "path", serviceDir, "duration", r.now().Sub(start), "error", err)
+			svcLog.Error("deploy failed", append([]any{"path", serviceDir, "duration", r.now().Sub(start), "error", err}, errDetail(err)...)...)
 			errs = append(errs, fmt.Errorf("deploying %s: %w", svc.Name, err))
 			r.Tracker.ServiceResult(svc.Name, err)
 			r.stage[svc.Name] = "deploy"
@@ -418,4 +419,14 @@ func (r *Reconciler) observation(snap statusserver.Status) notify.Observation {
 		})
 	}
 	return obs
+}
+
+// errDetail returns the journal-only detail of err as slog attrs, or nothing.
+// The detail stays out of the error message because that message is served
+// on the status page and mailed; see internal/redact.
+func errDetail(err error) []any {
+	if d := redact.Detail(err); d != "" {
+		return []any{"detail", d}
+	}
+	return nil
 }

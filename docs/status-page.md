@@ -13,6 +13,13 @@ framework.
 | `GET /` | A plain HTML page: agent version, uptime, last sync, and the state of each service. No JavaScript, no external resources, readable on a phone. |
 | `GET /status.json` | The same data as JSON. |
 
+## What the page shows for an error
+
+A failed deploy or teardown shows the stage, the exit code and "see the
+journal". It never shows the output of `docker compose`, because that output
+can quote a decrypted value. Run `journalctl -u gitops-agent` for the detail.
+The same applies to `/healthz`, `/status.json` and the file on disk.
+
 ## The file on disk
 
 The agent also writes the same JSON to

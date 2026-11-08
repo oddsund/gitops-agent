@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/oddsund/gitops-agent/internal/redact"
 )
 
 func stubDockerScript(t *testing.T, script string) string {
@@ -33,7 +35,7 @@ func TestDeploy_ErrorTextIsBounded(t *testing.T) {
 	if err == nil {
 		t.Fatal("want error")
 	}
-	msg := strings.TrimSpace(err.Error())
+	msg := strings.TrimSpace(redact.Detail(err))
 	if len(msg) > 2300 {
 		t.Errorf("error is %d bytes, want it bounded", len(msg))
 	}
@@ -51,7 +53,7 @@ func TestDeploy_ErrorTextStaysValidUTF8(t *testing.T) {
 	if err == nil {
 		t.Fatal("want error")
 	}
-	if !utf8.ValidString(err.Error()) {
+	if !utf8.ValidString(redact.Detail(err)) {
 		t.Error("error text is not valid UTF-8")
 	}
 }
@@ -113,7 +115,7 @@ func TestRunCompose_TimeoutErrorTextIsBounded(t *testing.T) {
 	if err == nil {
 		t.Fatal("want timeout error")
 	}
-	msg := err.Error()
+	msg := redact.Detail(err)
 	if !strings.Contains(msg, "timed out") {
 		t.Fatalf("not the timeout branch: %q", msg)
 	}

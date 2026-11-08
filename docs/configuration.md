@@ -88,11 +88,12 @@ file is missing, is not a regular file, or is readable by group or others,
 the agent logs an error, keeps deploying, and sends no email until you fix
 the file and restart it. The agent never writes the password to the log.
 
-`include_error` is off by default for a reason. Error text from
-`docker compose` can quote part of a line from a decrypted `secrets.env`
-file. With `include_error = true`, that text can leave the host in an email
-that other systems store and forward. Turn it on only if you trust the
-route to your mailbox.
+`include_error` is off by default for a reason. With `include_error = true`,
+error text can leave the host in an email that other systems store and
+forward. For a failed deploy or teardown, that text is a fixed summary
+(for example `docker compose up failed with exit code 1; see the journal`),
+never the output of `docker compose`, which can quote a decrypted value.
+Turn it on only if you trust the route to your mailbox.
 
 Example:
 

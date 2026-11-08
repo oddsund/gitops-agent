@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/oddsund/gitops-agent/internal/redact"
 )
 
 func logger(l *slog.Logger) *slog.Logger {
@@ -24,8 +26,8 @@ func logger(l *slog.Logger) *slog.Logger {
 const maxOutput = 2048
 
 // tail bounds compose output to its last 2 KiB, where compose puts the
-// error. An env_file parse error can quote part of a decrypted value, so
-// error text must never be unbounded.
+// error. It only bounds size: the caller must scrub secret values first,
+// because a cut can split a value in half and the half no longer matches.
 func tail(s string) string {
 	if len(s) <= maxOutput {
 		return s
@@ -43,53 +45,100 @@ func tail(s string) string {
 // self-clears within one or two reconcile cycles.
 const DefaultTimeout = 10 * time.Minute
 
+// Runner runs docker compose for a service directory. SecretsDir is the
+// base directory of the decrypted env files (<SecretsDir>/<service>/secrets.env);
+// compose output is scrubbed of the values in them before it is stored in an
+// error or logged. An empty SecretsDir scrubs nothing and is for tests only.
+type Runner struct {
+	Timeout    time.Duration // zero means DefaultTimeout
+	Log        *slog.Logger
+	SecretsDir string
+}
+
+func (r Runner) timeout() time.Duration {
+	if r.Timeout > 0 {
+		return r.Timeout
+	}
+	return DefaultTimeout
+}
+
 // Deploy runs `docker compose -f <serviceDir>/compose.yml up -d
-// --remove-orphans` for the given service directory, using DefaultTimeout.
+// --remove-orphans`. A failure is a *redact.Error: its message is a fixed
+// summary and the scrubbed compose output is in its Detail.
+func (r Runner) Deploy(serviceDir string) error {
+	return r.runWithTimeout(serviceDir, "up", "-d", "--remove-orphans")
+}
+
+// Down runs `docker compose -f <serviceDir>/compose.yml down
+// --remove-orphans`. It's used to stop a service that's been disabled or
+// removed from services.toml; its compose.yml must still exist on disk
+// (gitops-agent records the last known path for exactly this purpose -- see
+// internal/state). Errors are as for Deploy.
+func (r Runner) Down(serviceDir string) error {
+	return r.runWithTimeout(serviceDir, "down", "--remove-orphans")
+}
+
+func (r Runner) runWithTimeout(serviceDir string, composeArgs ...string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), r.timeout())
+	defer cancel()
+	return r.run(ctx, serviceDir, composeArgs...)
+}
+
+// Deploy runs `docker compose up` using DefaultTimeout. It does not scrub;
+// production code uses Runner.
 func Deploy(serviceDir string, log *slog.Logger) error {
 	return DeployWithTimeout(serviceDir, DefaultTimeout, log)
 }
 
-// DeployWithTimeout runs `docker compose -f <serviceDir>/compose.yml up -d
-// --remove-orphans` for the given service directory, killing the invocation
-// if it does not complete within timeout.
+// DeployWithTimeout is Deploy with a custom timeout; a non-positive timeout
+// means DefaultTimeout. It does not scrub; production code uses Runner.
 func DeployWithTimeout(serviceDir string, timeout time.Duration, log *slog.Logger) error {
-	return runCompose(serviceDir, timeout, log, "up", "-d", "--remove-orphans")
+	return Runner{Timeout: timeout, Log: log}.Deploy(serviceDir)
 }
 
-// Down runs `docker compose -f <serviceDir>/compose.yml down
-// --remove-orphans` for the given service directory, using DefaultTimeout.
-// It's used to stop a service that's been disabled or removed from
-// services.toml; serviceDir need not still be enabled in the manifest, but
-// its compose.yml must still exist on disk (gitops-agent records the last
-// known path for exactly this purpose -- see internal/state).
+// Down runs `docker compose down` using DefaultTimeout. It does not scrub;
+// production code uses Runner.
 func Down(serviceDir string, log *slog.Logger) error {
 	return DownWithTimeout(serviceDir, DefaultTimeout, log)
 }
 
-// DownWithTimeout runs `docker compose -f <serviceDir>/compose.yml down
-// --remove-orphans` for the given service directory, killing the invocation
-// if it does not complete within timeout.
+// DownWithTimeout is Down with a custom timeout; a non-positive timeout
+// means DefaultTimeout. It does not scrub; production code uses Runner.
 func DownWithTimeout(serviceDir string, timeout time.Duration, log *slog.Logger) error {
-	return runCompose(serviceDir, timeout, log, "down", "--remove-orphans")
+	return Runner{Timeout: timeout, Log: log}.Down(serviceDir)
 }
 
-// runCompose runs `docker compose -f <serviceDir>/compose.yml <composeArgs>`,
-// killing the invocation if it does not complete within timeout.
-func runCompose(serviceDir string, timeout time.Duration, log *slog.Logger, composeArgs ...string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	return runComposeCtx(ctx, serviceDir, timeout, log, composeArgs...)
-}
-
-// runComposeCtx is runCompose with the deadline context supplied by the
+// runComposeCtx runs compose with the deadline context supplied by the
 // caller, so a test can trigger the timeout branch at a moment it controls
 // instead of racing a wall-clock timer. timeout is only reported in logs
 // and the error text.
 func runComposeCtx(ctx context.Context, serviceDir string, timeout time.Duration, log *slog.Logger, composeArgs ...string) error {
-	l := logger(log)
+	return Runner{Timeout: timeout, Log: log}.run(ctx, serviceDir, composeArgs...)
+}
+
+// summary is the text that may be shown on the status page, in /healthz and
+// in email. It must never contain compose output.
+func summary(ctx context.Context, action string, timeout time.Duration, runErr error) string {
+	var exit *exec.ExitError
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		return fmt.Sprintf("docker compose %s timed out after %s; see the journal", action, timeout)
+	case errors.As(runErr, &exit) && exit.ExitCode() >= 0:
+		return fmt.Sprintf("docker compose %s failed with exit code %d; see the journal", action, exit.ExitCode())
+	case errors.As(runErr, &exit):
+		return fmt.Sprintf("docker compose %s was killed by a signal; see the journal", action)
+	default:
+		return fmt.Sprintf("docker compose %s could not run; see the journal", action)
+	}
+}
+
+func (r Runner) run(ctx context.Context, serviceDir string, composeArgs ...string) error {
+	l := logger(r.Log)
+	timeout := r.timeout()
 	composeFile := filepath.Join(serviceDir, "compose.yml")
 	args := append([]string{"compose", "-f", composeFile}, composeArgs...)
-	l.Debug("running docker compose", "path", serviceDir, "action", composeArgs[0], "timeout", timeout)
+	action := composeArgs[0]
+	l.Debug("running docker compose", "path", serviceDir, "action", action, "timeout", timeout)
 
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.WaitDelay = 10 * time.Second
@@ -98,20 +147,34 @@ func runComposeCtx(ctx context.Context, serviceDir string, timeout time.Duration
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	if err := cmd.Run(); err != nil {
+	if runErr := cmd.Run(); runErr != nil {
+		// Scrub BEFORE tail: cutting first could split a value in half and
+		// the half would no longer match.
+		sc := redact.LoadEnvDir(r.SecretsDir)
+		detail := tail(sc.Scrub(stderr.String()))
+		sum := summary(ctx, action, timeout, runErr)
+		cause := runErr.Error()
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return fmt.Errorf("docker %s (%s): timed out after %s: %s", composeArgs[0], composeFile, timeout, tail(stderr.String()))
+			cause = "timed out after " + timeout.String()
 		}
-		return fmt.Errorf("docker %s (%s): %w: %s", composeArgs[0], composeFile, err, tail(stderr.String()))
+		return &redact.Error{
+			Summary: sum,
+			Detail:  composeFile + ": " + cause + ": " + detail,
+		}
 	}
 
 	// docker compose writes progress to stderr even on success, so check
-	// both streams.
-	if out := strings.TrimSpace(stdout.String()); out != "" {
-		l.Debug("docker compose output", "path", serviceDir, "stream", "stdout", "output", tail(out))
-	}
-	if out := strings.TrimSpace(stderr.String()); out != "" {
-		l.Debug("docker compose output", "path", serviceDir, "stream", "stderr", "output", tail(out))
+	// both streams. Output is only built into a log line at debug level, so
+	// the secrets are only loaded then.
+	so, se := strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String())
+	if (so != "" || se != "") && l.Enabled(ctx, slog.LevelDebug) {
+		sc := redact.LoadEnvDir(r.SecretsDir)
+		if so != "" {
+			l.Debug("docker compose output", "path", serviceDir, "stream", "stdout", "output", tail(sc.Scrub(so)))
+		}
+		if se != "" {
+			l.Debug("docker compose output", "path", serviceDir, "stream", "stderr", "output", tail(sc.Scrub(se)))
+		}
 	}
 	return nil
 }
