@@ -46,6 +46,8 @@ type ServiceLoader interface {
 // Decrypter writes and removes a service's decrypted secrets. The adapter
 // binds the SSH key path and secrets base dir.
 type Decrypter interface {
+	// DecryptServiceSecrets writes the decrypted file. When serviceDir has
+	// no secrets.enc.env it removes any stale decrypted file instead.
 	DecryptServiceSecrets(serviceDir, serviceName string) error
 	// RemoveServiceSecrets deletes what DecryptServiceSecrets wrote for
 	// serviceName. A file that is already gone is success.
@@ -319,6 +321,9 @@ func (r *Reconciler) RunOnce(ctx context.Context) (bool, error) {
 			errs = append(errs, fmt.Errorf("decrypting secrets for %s: %w", svc.Name, err))
 			r.Tracker.ServiceResult(svc.Name, err)
 			r.stage[svc.Name] = "decrypt"
+			// Without this a service deployed earlier is skipped as up to
+			// date next cycle, and a failed stale-secret removal is never retried.
+			delete(r.deployedOnce, svc.Name)
 			continue
 		}
 
