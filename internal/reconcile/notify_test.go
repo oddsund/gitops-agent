@@ -169,3 +169,111 @@ func TestObservation_StageClearedAfterSuccess(t *testing.T) {
 		t.Errorf("state after recovery = %+v", s)
 	}
 }
+
+var manifestKey = notify.Key{Kind: notify.KindManifest}
+
+func TestObservation_ManifestBroken(t *testing.T) {
+	h := newHarness(t, "a:apps/a:true")
+	_, err := h.cycle(t, true)
+	mustNoErr(t, err)
+	h.loader.cfg, h.loader.err = nil, errLoad
+	_, err = h.cycle(t, true)
+	mustNoErr(t, err)
+	obs := h.r.observation(h.r.Tracker.Snapshot())
+	s := findState(t, obs, manifestKey)
+	if !s.Failing || s.Stage != "manifest" || !strings.Contains(s.Err, errLoad.Error()) {
+		t.Errorf("manifest state = %+v", s)
+	}
+	if sy := findState(t, obs, notify.Key{Kind: notify.KindSync}); sy.Failing {
+		t.Errorf("sync state = %+v", sy)
+	}
+	if obs.States[1].Key != manifestKey {
+		t.Errorf("manifest state is not second: %+v", obs.States)
+	}
+}
+
+func TestObservation_ManifestRecovers(t *testing.T) {
+	h := newHarness(t, "a:apps/a:true")
+	h.loader.cfg, h.loader.err = nil, errLoad
+	_, _ = h.cycle(t, true)
+	if !findState(t, h.r.observation(h.r.Tracker.Snapshot()), manifestKey).Failing {
+		t.Fatal("not failing after a bad load")
+	}
+	h.loader.cfg, h.loader.err = svcs("a:apps/a:true"), nil
+	_, err := h.cycle(t, true)
+	mustNoErr(t, err)
+	if s := findState(t, h.r.observation(h.r.Tracker.Snapshot()), manifestKey); s.Failing || s.Err != "" {
+		t.Errorf("state after recovery = %+v", s)
+	}
+}
+
+func TestObservation_ManifestBrokenFirstStart(t *testing.T) {
+	h := newHarness(t)
+	h.loader.cfg, h.loader.err = nil, errLoad
+	n := &fakeNotifier{}
+	h.r.Notifier = n
+	mustNoErr(t, h.r.Run(cancelled(), nil))
+	if h.r.svcCfg != nil {
+		t.Fatal("svcCfg set despite a failing load")
+	}
+	if len(n.obs) != 1 {
+		t.Fatalf("observations = %d, want 1", len(n.obs))
+	}
+	if s := findState(t, n.obs[0], manifestKey); !s.Failing {
+		t.Errorf("state = %+v", s)
+	}
+}
+
+func TestObservation_ManifestHealthyIsNotFailing(t *testing.T) {
+	h := newHarness(t, "a:apps/a:true")
+	_, err := h.cycle(t, true)
+	mustNoErr(t, err)
+	if s := findState(t, h.r.observation(h.r.Tracker.Snapshot()), manifestKey); s.Failing || s.Stage != "manifest" {
+		t.Errorf("state = %+v", s)
+	}
+}
+
+func TestObservation_ManifestStickyOnSyncFailure(t *testing.T) {
+	h := newHarness(t, "a:apps/a:true")
+	h.loader.cfg, h.loader.err = nil, errLoad
+	_, _ = h.cycle(t, true)
+
+	h.syncer.steps = []syncStep{{err: errSync}}
+	_, _ = h.r.RunOnce(context.Background())
+	if !findState(t, h.r.observation(h.r.Tracker.Snapshot()), manifestKey).Failing {
+		t.Error("manifest cleared by a cycle that never reached the load")
+	}
+
+	h.loader.cfg, h.loader.err = svcs("a:apps/a:true"), nil
+	_, err := h.cycle(t, true)
+	mustNoErr(t, err)
+	if findState(t, h.r.observation(h.r.Tracker.Snapshot()), manifestKey).Failing {
+		t.Error("manifest still failing after a good load")
+	}
+}
+
+func TestRunOnce_ManifestBrokenWording(t *testing.T) {
+	h := newHarness(t, "a:apps/a:true")
+	_, err := h.cycle(t, true)
+	mustNoErr(t, err)
+	h.loader.cfg, h.loader.err = nil, errLoad
+	_, err = h.cycle(t, true)
+	mustNoErr(t, err)
+	if snap := h.r.Tracker.Snapshot(); snap.ManifestError == "" || snap.ManifestNoList {
+		t.Errorf("with a good list: %+v", snap)
+	}
+	if !strings.Contains(h.logs.String(), "keeping last-known-good") {
+		t.Errorf("logs:\n%s", h.logs.String())
+	}
+
+	h = newHarness(t)
+	h.loader.cfg, h.loader.err = nil, errLoad
+	_, err = h.cycle(t, true)
+	mustNoErr(t, err)
+	if snap := h.r.Tracker.Snapshot(); snap.ManifestError == "" || !snap.ManifestNoList {
+		t.Errorf("without a list: %+v", snap)
+	}
+	if out := h.logs.String(); !strings.Contains(out, "no good list was loaded yet") || strings.Contains(out, "keeping last-known-good") {
+		t.Errorf("logs:\n%s", out)
+	}
+}

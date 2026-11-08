@@ -122,3 +122,29 @@ func TestDetector_MissingKeysKeepTheirState(t *testing.T) {
 		t.Errorf("event = %+v", ev[0])
 	}
 }
+
+func man(failing bool) State {
+	return State{Key: Key{Kind: KindManifest}, Failing: failing, Stage: "manifest"}
+}
+
+func TestDetector_ManifestKey(t *testing.T) {
+	c := &clock{t0}
+	min := 10 * time.Minute
+	d := NewDetector(min, c.now)
+	ev := step(t, d, 1, 0, man(true))
+	if ev[0].Key.Kind != KindManifest || ev[0].Recovered {
+		t.Errorf("event = %+v", ev[0])
+	}
+	step(t, d, 0, 0, man(true))
+	// A service flapping alongside does not touch the manifest key.
+	step(t, d, 1, 0, man(true), svc("a", true))
+	step(t, d, 1, 0, man(true), svc("a", false))
+	ev = step(t, d, 1, 0, man(false))
+	if !ev[0].Recovered || ev[0].Key.Kind != KindManifest {
+		t.Errorf("event = %+v", ev[0])
+	}
+	c.advance(time.Second)
+	step(t, d, 0, 1, man(true)) // inside min: held
+	c.t = t0.Add(min)
+	step(t, d, 1, 0, man(true))
+}

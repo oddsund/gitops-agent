@@ -218,9 +218,19 @@ func (r *Reconciler) RunOnce(ctx context.Context) (bool, error) {
 	r.Tracker.SyncResult(res.After.String(), nil)
 
 	manifestPath := filepath.Join(r.Config.ClonePath, servicesManifest)
+	// Recorded before the svcCfg == nil return below, so a first start with a
+	// broken file is reported too. A sync failure returns earlier and leaves
+	// the previous value in place: manifest and sync health are independent
+	// notify keys.
 	if loaded, err := r.Services.LoadServices(manifestPath); err != nil {
-		lg.Warn("services manifest is broken, keeping last-known-good list", "path", manifestPath, "error", err)
+		r.Tracker.ManifestResult(err, r.svcCfg != nil)
+		if r.svcCfg != nil {
+			lg.Warn("services manifest is broken, keeping last-known-good list", "path", manifestPath, "error", err)
+		} else {
+			lg.Warn("services manifest is broken and no good list was loaded yet", "path", manifestPath, "error", err)
+		}
 	} else {
+		r.Tracker.ManifestResult(nil, true)
 		r.svcCfg = loaded
 		lg.Debug("services manifest loaded", "path", manifestPath, "services", len(loaded.Services), "enabled", len(loaded.EnabledServices()))
 	}
@@ -392,8 +402,8 @@ func (r *Reconciler) notify() {
 
 // observation turns the tracker snapshot into per-key health. The tracker
 // keeps error strings only, so the failing stage comes from r.stage rather
-// than from parsing error text. A service that was never attempted is not
-// failing and is left out.
+// than from parsing error text. Order is sync, then manifest, then services.
+// A service that was never attempted is not failing and is left out.
 func (r *Reconciler) observation(snap statusserver.Status) notify.Observation {
 	syncErr := snap.LastSyncError
 	if url := r.Config.RepoURL; url != "" {
@@ -409,6 +419,12 @@ func (r *Reconciler) observation(snap statusserver.Status) notify.Observation {
 			Err:     syncErr,
 		}},
 	}
+	obs.States = append(obs.States, notify.State{
+		Key:     notify.Key{Kind: notify.KindManifest},
+		Failing: snap.ManifestError != "",
+		Stage:   "manifest",
+		Err:     snap.ManifestError,
+	})
 	if len(snap.CommitHash) >= 12 {
 		obs.Commit = snap.CommitHash[:12]
 	}

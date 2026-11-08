@@ -20,6 +20,21 @@ journal". It never shows the output of `docker compose`, because that output
 can quote a decrypted value. Run `journalctl -u gitops-agent` for the detail.
 The same applies to `/healthz`, `/status.json` and the file on disk.
 
+## Broken services.toml
+
+When `services.toml` cannot be loaded, the page shows a `services.toml:`
+line with the error under the sync block, and `/status.json` has a
+`manifest_error` field. The field is absent when the file loaded. It does
+not change `/healthz`, which stays `200` in both cases below: the cycle
+still succeeds. Only the first line of the error is kept, cut to 300
+characters.
+
+- If an earlier load worked, the page says the agent keeps the last good
+  list of services.
+- If no valid list has been loaded since the agent started, the page says
+  nothing is deployed, and `/status.json` has `"manifest_no_list": true`.
+  `/healthz` is still `200` then, so do not rely on it to catch this.
+
 ## The file on disk
 
 The agent also writes the same JSON to

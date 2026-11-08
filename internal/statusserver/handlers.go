@@ -130,6 +130,7 @@ var indexTemplate = template.Must(template.New("index").Funcs(template.FuncMap{
   {{if .Status.CommitHash}}commit <code>{{.Status.CommitHash}}</code><br>{{end}}
   {{if .Status.LastSyncError}}<span class="err">{{.Status.LastSyncError}}</span>{{end}}
 </p>
+{{if .Status.ManifestError}}<p class="muted"><span class="err">services.toml: {{.Status.ManifestError}}</span><br>{{if .Status.ManifestNoList}}no valid list has been loaded yet, nothing is deployed{{else}}keeping the last good list of services{{end}}</p>{{end}}
 
 <h2>services</h2>
 <table>

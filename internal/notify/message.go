@@ -68,6 +68,9 @@ func displayName(k Key) string {
 	if k.Kind == KindSync {
 		return "git sync"
 	}
+	if k.Kind == KindManifest {
+		return "services.toml"
+	}
 	n := cleanText(k.Name, maxNameRunes)
 	if n == "" {
 		return "(unnamed)"
@@ -166,7 +169,7 @@ func body(c Config, obs Observation, evs []Event, now time.Time) string {
 	if c.StatusURL != "" {
 		fmt.Fprintf(&b, "Status:  %s\n", cleanText(c.StatusURL, maxURLRunes))
 	}
-	b.WriteString("\nYou get one message when a service starts failing and one when it\n" +
+	b.WriteString("\nYou get one message when something starts failing and one when it\n" +
 		"recovers. Nothing is sent while it stays broken. Logs:\n" +
 		"  journalctl -u gitops-agent\n")
 	return b.String()

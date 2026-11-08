@@ -27,8 +27,9 @@ The agent re-reads `services.toml` from the new clone every cycle, not
 only at startup. To enable a service is a commit, not an SSH session.
 
 If the manifest does not parse (bad TOML, a duplicate service name), the
-agent logs the error and keeps the last-known-good list. It picks up a
-commit that corrects the manifest on the next cycle.
+agent logs the error and keeps the last-known-good list, and sends an
+email if notifications are on. It picks up a commit that corrects the
+manifest on the next cycle.
 
 ### 3. Tear down
 

@@ -212,9 +212,10 @@ func TestBuildMessage_StatusURLAndNoPassword(t *testing.T) {
 
 func TestBuildMessage_SectionsAndOrder(t *testing.T) {
 	sync := Event{Key: Key{Kind: KindSync}, Stage: "sync"}
-	_, _, body := build(t, testConfig(), Observation{}, failEv("zz", "deploy", ""), recEv("aa"), sync, failEv("bb", "", ""))
-	i, j, k := strings.Index(body, "git sync  (stage: sync)"), strings.Index(body, "  bb"), strings.Index(body, "  zz")
-	if !(i >= 0 && i < j && j < k) {
+	man := Event{Key: Key{Kind: KindManifest}, Stage: "manifest"}
+	_, _, body := build(t, testConfig(), Observation{}, failEv("zz", "deploy", ""), recEv("aa"), man, sync, failEv("bb", "", ""))
+	i, m, j, k := strings.Index(body, "git sync  (stage: sync)"), strings.Index(body, "services.toml  (stage: manifest)"), strings.Index(body, "  bb"), strings.Index(body, "  zz")
+	if !(i >= 0 && i < m && m < j && j < k) {
 		t.Errorf("order wrong:\n%s", body)
 	}
 	if strings.Contains(body, "  bb  (stage") {
@@ -231,5 +232,58 @@ func TestCleanText(t *testing.T) {
 	}
 	if got := cleanText("bad\xffutf8", 64); got != "bad\uFFFDutf8" {
 		t.Errorf("got %q", got)
+	}
+}
+
+func TestDisplayName_Manifest(t *testing.T) {
+	if got := displayName(Key{Kind: KindManifest, Name: "evil\r\nBcc: x"}); got != "services.toml" {
+		t.Errorf("displayName = %q", got)
+	}
+}
+
+func manifestEv(err string) Event {
+	return Event{Key: Key{Kind: KindManifest}, Stage: "manifest", Err: err}
+}
+
+func TestBuildMessage_Manifest(t *testing.T) {
+	c := testConfig()
+	c.IncludeError = true
+	errText := "invalid services manifest /r/services.toml: service \"web\": path \"../x\" must be relative\nsecond line"
+	_, pm, body := build(t, c, Observation{}, manifestEv(errText))
+	if got := pm.Header.Get("Subject"); got != "[gitops-agent] box1: services.toml is failing" {
+		t.Errorf("Subject = %q", got)
+	}
+	if !strings.Contains(body, "  services.toml  (stage: manifest)\n") {
+		t.Errorf("body:\n%s", body)
+	}
+	if !strings.Contains(body, `      error: invalid services manifest /r/services.toml: service "web": path "../x" must be relative`+"\n") || strings.Contains(body, "second line") {
+		t.Errorf("error line wrong:\n%s", body)
+	}
+	_, pm, _ = build(t, c, Observation{}, Event{Key: Key{Kind: KindManifest}, Recovered: true})
+	if got := pm.Header.Get("Subject"); got != "[gitops-agent] box1: services.toml recovered" {
+		t.Errorf("Subject = %q", got)
+	}
+	c.IncludeError = false
+	_, _, body = build(t, c, Observation{}, manifestEv(errText))
+	if strings.Contains(body, "error:") {
+		t.Errorf("error line without include_error:\n%s", body)
+	}
+	if !strings.Contains(body, "You get one message when something starts failing") {
+		t.Errorf("footer:\n%s", body)
+	}
+}
+
+func TestBuildMessage_ManifestHostileError(t *testing.T) {
+	c := testConfig()
+	c.IncludeError = true
+	m, _, body := build(t, c, Observation{}, manifestEv("x\rBcc: evil@example.org\r\n.\r\nQUIT"))
+	hdr, _, _ := strings.Cut(string(m.data), "\r\n\r\n")
+	if strings.Contains(hdr, "evil") {
+		t.Errorf("hostile text in headers:\n%s", hdr)
+	}
+	for _, l := range strings.Split(body, "\n") {
+		if strings.Contains(l, "\r") || strings.HasPrefix(l, "Bcc:") || strings.TrimRight(l, "\r") == "." {
+			t.Errorf("hostile line %q in body:\n%s", l, body)
+		}
 	}
 }

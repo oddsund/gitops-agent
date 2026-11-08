@@ -177,8 +177,8 @@ when you did not look.
 The agent sends one email when a service goes from working to failing, and
 one when it works again. It does not send an email on every cycle while a
 service stays broken. A failure of the git sync is reported in the same
-way, as `git sync`. If several services change state in the same cycle,
-you get one email that lists all of them.
+way, as `git sync`. A broken `services.toml` is too. If several services
+change state in the same cycle, you get one email that lists all of them.
 
 - A service counts as failing when its last deploy, secrets decrypt, or
   teardown failed. It counts as working again after the next success.
@@ -200,9 +200,19 @@ you get one email that lists all of them.
   `deploy`, `teardown`), the commit, the time and, if you set it, the link
   to the status page. It contains error text only if `include_error` is
   `true`.
-- Not covered: a broken `services.toml` (the agent keeps the last good
-  list and logs a warning), and a failure to remove decrypted secrets.
-  Both show on the status page and in the journal.
+- A broken `services.toml` is reported like a service, under the name
+  `services.toml` (stage `manifest`). The file counts as broken when it is
+  missing, cannot be parsed, or fails validation. The agent keeps
+  deploying the last good list while it is broken, or nothing if it has not
+  loaded a good file since it started. You get one email when it breaks and
+  one when it is valid again. A second, different error while it stays
+  broken does not send another email. The error line in the email (with
+  `include_error`) is the validation message. For `services.toml` it names
+  the service and the path from the repository.
+  While the git sync is failing the agent does not re-read `services.toml`,
+  so a manifest email waits for the next good sync.
+- Not covered: a failure to remove decrypted secrets. It shows on the
+  status page and in the journal.
 
 The agent never opens a connection to a mail server the repository chooses.
 The server, the recipients and the password all come from the host's
