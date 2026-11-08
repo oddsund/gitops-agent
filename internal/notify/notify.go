@@ -99,6 +99,18 @@ func (s *Service) String() string { return "notify.Service{redacted}" }
 // cannot work (unreadable or too-open password file, bad address); the
 // caller decides what to do about it.
 func New(cfg Config, log *slog.Logger, now func() time.Time) (*Service, error) {
+	m, err := mailerFor(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return newService(cfg, log, now, m, m.redact), nil
+}
+
+// mailerFor applies the checks every sender must pass (addresses, then the
+// password file) and builds the Mailer. New and SendTest both call it, so
+// the notify-test command cannot report success for a setup the daemon
+// would refuse.
+func mailerFor(cfg Config) (*Mailer, error) {
 	for _, a := range append([]string{cfg.From}, cfg.To...) {
 		if _, err := mail.ParseAddress(a); err != nil {
 			return nil, fmt.Errorf("notify: invalid address in configuration")
@@ -111,8 +123,7 @@ func New(cfg Config, log *slog.Logger, now func() time.Time) (*Service, error) {
 			return nil, err
 		}
 	}
-	m := newMailer(cfg, password)
-	return newService(cfg, log, now, m, m.redact), nil
+	return newMailer(cfg, password), nil
 }
 
 func newService(cfg Config, log *slog.Logger, now func() time.Time, snd sender, redact func(string) string) *Service {

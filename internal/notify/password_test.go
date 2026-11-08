@@ -95,9 +95,11 @@ func TestLoadPassword_SymlinkChecksTarget(t *testing.T) {
 	}
 }
 
+// cmd/gitops-agent's notify-test matches the substring " is owned by uid " to
+// decide whether to add a hint; a rewording must break this test.
 func TestLoadPassword_OwnerMustBeAgentUID(t *testing.T) {
 	p := writePW(t, "pw\n", 0o600)
-	if _, err := loadPassword(p, func() int { return os.Geteuid() + 1 }); err == nil || !strings.Contains(err.Error(), "owned by uid") {
+	if _, err := loadPassword(p, func() int { return os.Geteuid() + 1 }); err == nil || !strings.Contains(err.Error(), " is owned by uid ") {
 		t.Errorf("foreign owner accepted: %v", err)
 	}
 	if got, err := loadPassword(p, os.Geteuid); err != nil || got != "pw" {

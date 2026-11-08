@@ -206,6 +206,33 @@ func messageID(c Config, now time.Time) string {
 // from the random Message-ID.
 func buildMessage(c Config, obs Observation, evs []Event, now time.Time) (*message, error) {
 	evs = sortedEvents(evs)
+	return render(c, subject(c, evs), body(c, obs, evs, now), now, len(evs))
+}
+
+// buildTestMessage renders the mail that notify-test sends.
+func buildTestMessage(c Config, now time.Time) (*message, error) {
+	host := cleanText(c.Hostname, maxHostRunes)
+	subj := "[gitops-agent] "
+	if host != "" {
+		subj += host + ": "
+	}
+	subj = cleanText(subj+"test notification", maxSubjectRunes)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "This is a test message from gitops-agent on %s.\n\n", host)
+	fmt.Fprintf(&b, "If you can read this, the [notify] settings in config.toml work:\n")
+	fmt.Fprintf(&b, "the server accepted the message from %s. No service is failing.\n\n", host)
+	fmt.Fprintf(&b, "Time:    %s\n", now.UTC().Format(time.RFC3339))
+	if c.StatusURL != "" {
+		fmt.Fprintf(&b, "Status:  %s\n", cleanText(c.StatusURL, maxURLRunes))
+	}
+	b.WriteString("\nYou asked for this message with: gitops-agent notify-test\n")
+	return render(c, subj, b.String(), now, 0)
+}
+
+// render parses the addresses and writes the headers shared by every mail
+// this package sends, so the header block exists once.
+func render(c Config, subj, text string, now time.Time, events int) (*message, error) {
 	from, err := mail.ParseAddress(c.From)
 	if err != nil {
 		return nil, fmt.Errorf("from address: %w", err)
@@ -225,7 +252,7 @@ func buildMessage(c Config, obs Observation, evs []Event, now time.Time) (*messa
 	for _, h := range [][2]string{
 		{"From", from.String()},
 		{"To", strings.Join(tos, ", ")},
-		{"Subject", mime.QEncoding.Encode("utf-8", subject(c, evs))},
+		{"Subject", mime.QEncoding.Encode("utf-8", subj)},
 		{"Date", now.Format(time.RFC1123Z)},
 		{"Message-ID", messageID(c, now)},
 		{"MIME-Version", "1.0"},
@@ -240,6 +267,6 @@ func buildMessage(c Config, obs Observation, evs []Event, now time.Time) (*messa
 		b.WriteString(line)
 	}
 	b.WriteString("\r\n")
-	b.WriteString(body(c, obs, evs, now))
-	return &message{from: from.Address, to: bare, data: []byte(b.String()), events: len(evs)}, nil
+	b.WriteString(text)
+	return &message{from: from.Address, to: bare, data: []byte(b.String()), events: events}, nil
 }
