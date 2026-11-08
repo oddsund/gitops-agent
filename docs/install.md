@@ -463,8 +463,8 @@ removed in a later release. Do not rely on it. Run `install.sh` instead.
 
 If your own provisioning script installs these files or sources the
 library, change it to call `scripts/install.sh` (or to install the binary
-and run `gitops-agent install`). The library will be removed in a later
-release.
+and run `gitops-agent install`). The library has been removed from this
+repository. Releases up to v1.8.0 still contain it.
 
 [releases]: https://github.com/oddsund/gitops-agent/releases
 [attestations]: https://docs.github.com/en/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds
