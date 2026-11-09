@@ -14,8 +14,8 @@ var subcommands = map[string]func(args []string) error{}
 // isSubcommand reports whether args[0] should be dispatched as a
 // subcommand rather than parsed as daemon flags. A bare invocation (no
 // args) or a leading "-" (an actual flag, including -version) always
-// means "run the daemon" -- gitops-agent.service's ExecStart and
-// homelab's verify.bash both depend on that shape staying intact.
+// means "run the daemon" -- gitops-agent.service's ExecStart and external
+// host-verification scripts both depend on that shape staying intact.
 func isSubcommand(args []string) bool {
 	return len(args) > 0 && !strings.HasPrefix(args[0], "-")
 }

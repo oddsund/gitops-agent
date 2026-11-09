@@ -18,7 +18,7 @@ var update = flag.Bool("update", false, "rewrite golden files")
 
 const (
 	goldenUser    = "pi"
-	goldenRepoURL = "git@github.com:example/homelab.git"
+	goldenRepoURL = "git@github.com:example/services.git"
 	goldenSSHKey  = "/home/pi/.ssh/id_ed25519"
 	goldenClone   = "/opt/gitops-agent/repo"
 )
@@ -56,8 +56,9 @@ func TestRenderConfigTOML_Golden(t *testing.T) {
 	checkGolden(t, "config.toml.golden", got)
 }
 
-// TestRender_MatchesProvisionSed runs the sed expressions from homelab's
-// iac/provision.bash so the Go rendering stays byte-for-byte equivalent.
+// TestRender_MatchesProvisionSed runs the sed expressions the provisioning
+// script used before the install subcommand existed, so the Go rendering
+// stays byte-for-byte equivalent for hosts it already set up.
 func TestRender_MatchesProvisionSed(t *testing.T) {
 	if _, err := exec.LookPath("sed"); err != nil {
 		t.Skip("sed not available")

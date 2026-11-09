@@ -23,7 +23,7 @@ func newTestConfig(t *testing.T) (Config, *cmdrun.Fake, *[]string) {
 	return Config{
 		Root:       t.TempDir(),
 		User:       "pi",
-		RepoURL:    "git@github.com:example/homelab.git",
+		RepoURL:    "git@github.com:example/services.git",
 		SSHKeyPath: "/home/pi/.ssh/id_ed25519",
 		ClonePath:  "/opt/gitops-agent/repo",
 		Version:    "v1.2.3",
@@ -156,7 +156,7 @@ func TestInstall_FreshHost(t *testing.T) {
 	}
 	content := mustRead(t, cfgFile)
 	for _, want := range []string{
-		`repo_url = "git@github.com:example/homelab.git"`,
+		`repo_url = "git@github.com:example/services.git"`,
 		`ssh_key_path = "/home/pi/.ssh/id_ed25519"`,
 		`clone_path = "/opt/gitops-agent/repo"`,
 	} {
