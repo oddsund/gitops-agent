@@ -19,16 +19,29 @@ import (
 // github.com/getsops/sops/v3/age.SopsAgeSshPrivateKeyFileEnv).
 const sshPrivateKeyFileEnv = "SOPS_AGE_SSH_PRIVATE_KEY_FILE"
 
-// DecryptFile decrypts a sops-encrypted dotenv file at encPath, using the
-// SSH private key at sshKeyPath as the decryption identity.
-func DecryptFile(encPath, sshKeyPath string) ([]byte, error) {
-	// decrypt package has no functional parameter for the key; sops only
-	// accepts it via this env var (or a default path).
-	if err := os.Setenv(sshPrivateKeyFileEnv, sshKeyPath); err != nil {
-		return nil, fmt.Errorf("setting %s: %w", sshPrivateKeyFileEnv, err)
-	}
+// decryptFile is decrypt.File; tests replace it to inject sops errors.
+var decryptFile = decrypt.File
 
-	out, err := decrypt.File(encPath, "dotenv")
+// useKey points sops at the SSH private key. The decrypt package has no
+// functional parameter for the key; sops only accepts it via this env var
+// (or a default path).
+func useKey(sshKeyPath string) error {
+	if err := os.Setenv(sshPrivateKeyFileEnv, sshKeyPath); err != nil {
+		return fmt.Errorf("setting %s: %w", sshPrivateKeyFileEnv, err)
+	}
+	return nil
+}
+
+// DecryptFile decrypts a sops-encrypted dotenv file at encPath, using the
+// SSH private key at sshKeyPath as the decryption identity. The returned
+// error carries sops' own text, which can quote file content and MACs: it
+// is not safe to show. Callers that surface errors must use
+// DecryptServiceSecrets.
+func DecryptFile(encPath, sshKeyPath string) ([]byte, error) {
+	if err := useKey(sshKeyPath); err != nil {
+		return nil, err
+	}
+	out, err := decryptFile(encPath, "dotenv")
 	if err != nil {
 		return nil, fmt.Errorf("decrypting %s: %w", encPath, err)
 	}
@@ -74,9 +87,16 @@ func DecryptServiceSecrets(serviceDir, serviceName, sshKeyPath, secretsBaseDir s
 		return fmt.Errorf("checking %s: %w", encPath, err)
 	}
 
-	plaintext, err := DecryptFile(encPath, sshKeyPath)
-	if err != nil {
+	// A decrypt.File failure becomes a *redact.Error (fixed summary, scrubbed
+	// journal detail). The other errors in this function carry a path and an
+	// errno, never file content, and stay verbatim so that "permission
+	// denied writing /run/gitops-agent/x/secrets.env" remains actionable.
+	if err := useKey(sshKeyPath); err != nil {
 		return err
+	}
+	plaintext, err := decryptFile(encPath, "dotenv")
+	if err != nil {
+		return wrapDecryptErr(err, secretsBaseDir)
 	}
 
 	outDir := filepath.Join(secretsBaseDir, serviceName)
