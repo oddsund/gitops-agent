@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/oddsund/gitops-agent/internal/notify"
 )
@@ -163,6 +164,7 @@ func TestObservation_StageClearedAfterSuccess(t *testing.T) {
 		t.Fatalf("state = %+v", s)
 	}
 	h.dep.deployFail["/clone/apps/a"] = nil
+	h.clock.advance(retryBase + time.Second)
 	_, err := h.cycle(t, true)
 	mustNoErr(t, err)
 	if s := findState(t, h.r.observation(h.r.Tracker.Snapshot()), key); s.Failing || s.Stage != "" {

@@ -46,12 +46,14 @@ service that one commit renames does not collide with itself.
 
 ### 4. Decide what to deploy
 
-The agent deploys a service in three cases:
+The agent deploys a service in four cases:
 
 - The directory of the service changed between the previous commit and
   the current commit.
-- The agent did not deploy the service since it started.
+- The agent has not deployed the service successfully since it started,
+  and the service is not waiting for a retry (see below).
 - A full reconcile is due.
+- The last attempt failed and the retry time has passed.
 
 For the first case, the agent compares the git tree hash of the
 directory. A tree hash is already a content hash of a whole directory, so
@@ -61,6 +63,19 @@ The full reconcile exists because drift is not visible in git. If you
 stop a container by hand, no commit looks different. Every
 `full_reconcile_interval_seconds` (default 3600) the agent deploys every
 enabled service.
+
+After a failed decrypt or deploy, the agent waits before it tries the
+service again: 30 seconds, then 60, 120, and so on, up to 10 minutes or
+`full_reconcile_interval_seconds`, whichever is shorter. Decrypt and
+deploy failures use the same schedule. The agent checks the retry time at
+each poll, so a retry can come later than the time itself. A new commit
+that changes the service, a change to its path in `services.toml`, or a
+full reconcile retries it at once. A success resets the schedule. The
+agent keeps it in memory only, so after a restart the first cycle
+deploys everything. A SIGHUP only skips the wait for the next poll. It
+does not clear the schedule. If you fix a problem on the host, such as a
+missing sops key, the agent still waits for the retry time before it
+tries again.
 
 If the agent cannot compare the tree hashes (unknown commit, unreadable
 tree), it deploys the service. A redundant `docker compose up` is cheap

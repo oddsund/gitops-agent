@@ -442,6 +442,7 @@ func TestRunOnce_DecryptFailureRetriedNextCycle(t *testing.T) {
 
 	h.dec.failFor["a"] = nil
 	h.j.reset()
+	h.clock.advance(retryBase + time.Second)
 	_, err := h.cycle(t, false)
 	mustNoErr(t, err)
 	assertJournal(t, h, "decrypt:a", "deploy:/clone/apps/a")
@@ -467,6 +468,7 @@ func TestRunOnce_DecryptFailureRetriedAfterSuccessfulDeploy(t *testing.T) {
 	h.dec.failFor["a"] = nil
 	h.changes.changed["apps/a"] = false
 	h.j.reset()
+	h.clock.advance(retryBase + time.Second)
 	_, err = h.cycle(t, false)
 	mustNoErr(t, err)
 	assertJournal(t, h, "decrypt:a", "deploy:/clone/apps/a")
@@ -565,19 +567,34 @@ func TestRunOnce_PathChangedErrorFailsOpen(t *testing.T) {
 	assertJournal(t, h, "decrypt:a", "deploy:/clone/apps/a", "decrypt:b", "deploy:/clone/apps/b")
 }
 
-func TestRunOnce_ChangeDetectorSkippedForNeverDeployedService(t *testing.T) {
+func TestRunOnce_FailedServiceRetriedAfterBackoffOnChangedSync(t *testing.T) {
 	h := newHarness(t, "a:apps/a:true", "b:apps/b:true")
 	h.dep.deployFail["/clone/apps/a"] = errDeploy
 	_, _ = h.cycle(t, false)
 
 	h.dep.deployFail["/clone/apps/a"] = nil
 	h.j.reset()
+	h.clock.advance(retryBase + time.Second)
 	_, err := h.cycle(t, true)
 	mustNoErr(t, err)
-	// a has never deployed OK, so it deploys without asking the detector.
+	// a is due for its retry whatever the detector says; b is up to date.
 	assertJournal(t, h, "decrypt:a", "deploy:/clone/apps/a")
-	if !reflect.DeepEqual(h.changes.paths, []string{"apps/b"}) {
-		t.Errorf("detector paths = %v, want [apps/b]", h.changes.paths)
+}
+
+func TestRunOnce_DetectorNotAskedForServiceThatNeverDeployed(t *testing.T) {
+	h := newHarness(t, "a:apps/a:true")
+	_, err := h.cycle(t, false) // first cycle: full reconcile
+	mustNoErr(t, err)
+
+	// A later changed sync (not a full reconcile) brings in b.
+	h.loader.cfg = svcs("a:apps/a:true", "b:apps/b:true")
+	h.clock.advance(time.Minute)
+	h.j.reset()
+	_, err = h.cycle(t, true)
+	mustNoErr(t, err)
+	assertJournal(t, h, "decrypt:b", "deploy:/clone/apps/b")
+	if !reflect.DeepEqual(h.changes.paths, []string{"apps/a"}) {
+		t.Errorf("detector paths = %v, want [apps/a] only", h.changes.paths)
 	}
 }
 
