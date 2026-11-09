@@ -10,7 +10,7 @@
 [git]
 # Any URL go-git can clone. SSH is the common choice so the same key can
 # also serve as the sops decryption identity below.
-repo_url = "git@github.com:example/homelab.git"
+repo_url = "git@github.com:example/services.git"
 branch = "main"
 
 # Where the repo gets cloned to on this host. Separate from wherever this

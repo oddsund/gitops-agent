@@ -1,6 +1,6 @@
-// Package installer is the file-placement half of homelab's
-// iac/provision.bash: it writes config.toml, renders and installs the
-// systemd units and enables them.
+// Package installer is the file-placement half of host provisioning,
+// moved out of an external provisioning script: it writes config.toml,
+// renders and installs the systemd units and enables them.
 //
 // It is privileged and reachable only from the explicit `gitops-agent
 // install` subcommand, never from the reconcile loop. It reads nothing from
@@ -271,7 +271,7 @@ func writeUnit(cfg Config, path, content string) (writeResult, error) {
 // installVersionFile makes the version file describe the binary on disk. It
 // records cfg.Version on every run, because install.sh replaces the binary
 // and then runs install, so "only if absent" left the file stale and made
-// `update` and homelab's verify.bash see the old version. An older binary
+// `update` and external verification scripts see the old version. An older binary
 // is recorded too: the file must match the disk, and a too-new value would
 // trip update's no-downgrade guard. It records nothing when the version is
 // not a release tag (update treats an unparsable value as "update
