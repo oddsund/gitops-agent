@@ -182,6 +182,8 @@ change state in the same cycle, you get one email that lists all of them.
 
 - A service counts as failing when its last deploy, secrets decrypt, or
   teardown failed. It counts as working again after the next success.
+- Automatic retries of a failed deploy do not send more email. You get
+  one "failing" email, and one "recovered" email when a retry succeeds.
 - Between two "failing" emails for the same service the agent waits at
   least `min_interval_seconds`. A failure inside that time is not lost:
   the email goes out when the time has passed, if the service is still

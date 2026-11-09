@@ -113,6 +113,59 @@ type Reconciler struct {
 	cycle             int               // RunOnce calls so far; 1 on the first
 	lg                *slog.Logger      // r.log() tagged with the current cycle
 	stage             map[string]string // service -> stage of its current failure; see observation
+	retry             map[string]retryState
+}
+
+// retryState is the backoff for a service whose last attempt failed. It
+// lives in memory only: after a restart the first cycle is a full
+// reconcile, which tries everything anyway.
+type retryState struct {
+	failures int
+	next     time.Time // do not retry before this
+	path     string    // svc.Path when it failed; a different path resets
+}
+
+const (
+	retryBase = 30 * time.Second
+	retryCap  = 10 * time.Minute
+)
+
+// retryDelay is the wait after the given number of consecutive failures:
+// 30s doubling, capped at retryCap or the full reconcile interval,
+// whichever is shorter (a full reconcile retries everything anyway).
+func (r *Reconciler) retryDelay(failures int) time.Duration {
+	limit := retryCap
+	if full := r.Config.FullReconcileEvery; full > 0 && full < limit {
+		limit = full
+	}
+	// The shift guard keeps a long failure streak from overflowing.
+	if failures > 20 {
+		return limit
+	}
+	if failures < 1 {
+		failures = 1
+	}
+	return min(retryBase<<(failures-1), limit)
+}
+
+// recordFailure starts or extends svc's backoff. Decrypt and deploy
+// failures share one schedule: both need the same docker host, and a bad
+// sops key will not heal in 15 seconds either.
+//
+// deployedOnce is cleared on purpose. Without that, a service that had
+// deployed earlier would be skipped as up to date as soon as the backoff
+// is reset by a path change (nothing "changed" then), and a failed
+// stale-secret removal in the decrypt step would never be retried. It also
+// keeps deployedOnce meaning "succeeded since start".
+func (r *Reconciler) recordFailure(svc config.Service) (failures int, delay time.Duration) {
+	delete(r.deployedOnce, svc.Name)
+	st := r.retry[svc.Name]
+	st.failures++
+	delay = r.retryDelay(st.failures)
+	st.next = r.now().Add(delay)
+	st.path = svc.Path
+	r.retry[svc.Name] = st
+	return st.failures, delay
 }
 
 func (r *Reconciler) log() *slog.Logger {
@@ -138,6 +191,7 @@ func (r *Reconciler) start() {
 	}
 	r.deployedOnce = make(map[string]bool)
 	r.stage = make(map[string]string)
+	r.retry = make(map[string]retryState)
 	r.deployed = state.Load(r.Config.StatePath, r.log().With("component", "state"))
 }
 
@@ -265,6 +319,20 @@ func (r *Reconciler) RunOnce(ctx context.Context) (bool, error) {
 	for _, svc := range r.svcCfg.EnabledServices() {
 		desired[svc.Name] = true
 	}
+	// A service that never deployed is not in r.deployed, so teardown
+	// never clears its backoff. Drop it here, or a removed or disabled
+	// service would leak its entry and a re-enable would wait out the old
+	// backoff. A stage stays while a teardown may still fail for the name.
+	for name := range r.retry {
+		if !desired[name] {
+			delete(r.retry, name)
+		}
+	}
+	for name := range r.stage {
+		if _, deployed := r.deployed[name]; !desired[name] && !deployed {
+			delete(r.stage, name)
+		}
+	}
 	tornDown := map[string]bool{}
 	for name, serviceDir := range r.deployed {
 		if desired[name] {
@@ -282,6 +350,7 @@ func (r *Reconciler) RunOnce(ctx context.Context) (bool, error) {
 		}
 		delete(r.deployed, name)
 		delete(r.stage, name)
+		delete(r.retry, name)
 		delete(r.deployedOnce, name) // a later re-enable must force a fresh deploy
 		stateDirty = true
 		r.Tracker.ServiceResult(name, nil)
@@ -313,34 +382,60 @@ func (r *Reconciler) RunOnce(ctx context.Context) (bool, error) {
 		}
 	}
 
-	var deployedCount, skipped int
+	var deployedCount, skipped, backedOff int
 	for _, svc := range r.svcCfg.EnabledServices() {
 		serviceDir := filepath.Join(r.Config.ClonePath, svc.Path)
 
-		if !fullReconcile && r.deployedOnce[svc.Name] && !r.serviceNeedsDeploy(res, svc) {
-			skipped++
-			continue
+		svcLog := lg.With("service", svc.Name)
+		rs, failing := r.retry[svc.Name]
+		if failing && rs.path != svc.Path {
+			// Manifest change: a fixed path deserves a fresh backoff,
+			// full reconcile or not.
+			svcLog.Debug("path changed, clearing retry backoff")
+			delete(r.retry, svc.Name)
+			failing = false
+		}
+		if !fullReconcile && (failing || r.deployedOnce[svc.Name]) {
+			// Asked only for a service that has deployed or is backing
+			// off, so the detector is not consulted needlessly.
+			needs := r.serviceNeedsDeploy(res, svc)
+			if failing && needs {
+				// New commit for this service: retry now, from scratch.
+				svcLog.Debug("change detected, clearing retry backoff")
+				delete(r.retry, svc.Name)
+				failing = false
+			}
+			if failing {
+				if r.now().Before(rs.next) {
+					backedOff++
+					continue
+				}
+			} else if r.deployedOnce[svc.Name] && !needs {
+				skipped++
+				continue
+			}
+		}
+		if rs, ok := r.retry[svc.Name]; ok {
+			svcLog.Info("retrying failed service", "failures", rs.failures)
 		}
 
 		r.Tracker.ServiceAttempt(svc.Name)
 		start := r.now()
-		svcLog := lg.With("service", svc.Name)
 
 		svcLog.Info("decrypting secrets")
 		if err := r.Decrypter.DecryptServiceSecrets(serviceDir, svc.Name); err != nil {
-			svcLog.Error("decrypting secrets failed", "error", err)
+			failures, delay := r.recordFailure(svc)
+			svcLog.Error("decrypting secrets failed", "error", err, "failures", failures, "retry_in", delay)
 			errs = append(errs, fmt.Errorf("decrypting secrets for %s: %w", svc.Name, err))
 			r.Tracker.ServiceResult(svc.Name, err)
 			r.stage[svc.Name] = "decrypt"
-			// Without this a service deployed earlier is skipped as up to
-			// date next cycle, and a failed stale-secret removal is never retried.
-			delete(r.deployedOnce, svc.Name)
 			continue
 		}
 
 		svcLog.Info("running docker compose up")
 		if err := r.Deployer.Deploy(serviceDir); err != nil {
-			svcLog.Error("deploy failed", append([]any{"path", serviceDir, "duration", r.now().Sub(start), "error", err}, errDetail(err)...)...)
+			failures, delay := r.recordFailure(svc)
+			svcLog.Error("deploy failed", append([]any{"path", serviceDir, "duration", r.now().Sub(start), "error", err, "failures", failures, "retry_in", delay}, errDetail(err)...)...)
 			errs = append(errs, fmt.Errorf("deploying %s: %w", svc.Name, err))
 			r.Tracker.ServiceResult(svc.Name, err)
 			r.stage[svc.Name] = "deploy"
@@ -348,6 +443,7 @@ func (r *Reconciler) RunOnce(ctx context.Context) (bool, error) {
 		}
 		r.Tracker.ServiceResult(svc.Name, nil)
 		delete(r.stage, svc.Name)
+		delete(r.retry, svc.Name)
 
 		r.deployedOnce[svc.Name] = true
 		if r.deployed[svc.Name] != serviceDir {
@@ -368,8 +464,8 @@ func (r *Reconciler) RunOnce(ctx context.Context) (bool, error) {
 	// One summary line, not one per service: at the active cadence this
 	// runs every 15s and would otherwise bury everything else in the
 	// journal.
-	if skipped > 0 {
-		lg.Info("cycle complete", "commit", gitsync.Short(res.After), "deployed", deployedCount, "up_to_date", skipped)
+	if skipped > 0 || backedOff > 0 {
+		lg.Info("cycle complete", "commit", gitsync.Short(res.After), "deployed", deployedCount, "up_to_date", skipped, "backing_off", backedOff)
 	}
 	return res.Changed, errors.Join(errs...)
 }
