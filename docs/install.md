@@ -155,10 +155,12 @@ file that `gh` checks is the file that gets installed.
 > If `gh` is installed but cannot authenticate, the check fails and the
 > install or update stops. Run `gh auth login`, or put a token in
 > `/etc/gitops-agent/github-token` for the update timer. The file holds a
-> credential and the agent does not check its mode, so make it readable by
-> root only (`chmod 600`). Or set
-> `GITOPS_AGENT_SKIP_ATTESTATION=1` and accept the checksum-only risk
-> above.
+> credential and the agent does not check its mode, so make it owned by
+> root with mode 600 (`install -m 600 -o root -g root /dev/stdin
+> /etc/gitops-agent/github-token`, or `chmod 600` after writing). Use a
+> fine-grained personal access token with no extra permissions (public
+> repositories, read-only). Or set `GITOPS_AGENT_SKIP_ATTESTATION=1` and
+> accept the checksum-only risk above.
 
 ## gitops-agent install
 
@@ -282,11 +284,12 @@ Other facts:
 - The command needs root. It exits 0 on success, on "already on", in the
   no-downgrade case, and for `-h`. It exits 1 on any error. It takes no
   positional arguments.
-- The token in `GITHUB_TOKEN_FILE` is optional. `update` uses it for GitHub
-  API rate limits and passes it to `gh` as `GH_TOKEN`. It never sends the
-  token to the download hosts, never puts it on a command line, and never
-  logs it. It does not enable private repositories (see
-  [Limitations](#limitations)).
+- The token in `GITHUB_TOKEN_FILE` is optional without `gh`. With `gh`
+  installed it is required: `update` passes it to `gh` as `GH_TOKEN`, and
+  `gh attestation verify` fails without a credential. It also raises
+  GitHub API rate limits. It never sends the token to the download hosts,
+  never puts it on a command line, and never logs it. It does not enable
+  private repositories (see [Limitations](#limitations)).
 - Logs go to stderr with the prefix `gitops-agent update:`. Under the
   timer, read them with `journalctl -u gitops-agent-update`.
 - You can run it by hand at any time: `sudo gitops-agent update`.
@@ -355,8 +358,9 @@ and a newline.
   `sudo systemctl disable --now gitops-agent-update.timer`.
 - Private forks are not supported. `GITOPS_AGENT_REPO` can point at a
   public fork that publishes the same asset names and attestations. The
-  GitHub token is for API rate limits only. The download is always
-  anonymous, so a private repository fails with a 404.
+  GitHub token authenticates `gh` and raises API rate limits; it does not
+  enable private repositories. The download is always anonymous, so a
+  private repository fails with a 404.
 - Provenance checking needs a recent `gh` (>= 2.68.0). Distribution
   packages are often older and may lack `gh attestation` entirely; use the
   [upstream apt repository](https://github.com/cli/cli/blob/trunk/docs/install_linux.md).

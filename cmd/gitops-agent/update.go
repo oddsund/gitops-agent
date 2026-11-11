@@ -32,6 +32,7 @@ func runUpdate(args []string) error {
 	if os.Geteuid() != 0 {
 		return errors.New("update must run as root")
 	}
+	cfg.TokenFile = tokenPath(os.Getenv)
 	cfg.Token, err = readToken(os.Getenv, os.ReadFile)
 	if err != nil {
 		return err
@@ -80,10 +81,18 @@ func newUpdateConfig(args []string, getenv func(string) string, stderr io.Writer
 	}, nil
 }
 
-// readToken returns "" when the token file does not exist: the token only
-// raises API rate limits.
+// tokenPath is where the GitHub token is read from.
+func tokenPath(getenv func(string) string) string {
+	return cmp.Or(getenv("GITHUB_TOKEN_FILE"), selfupdate.DefaultTokenFile)
+}
+
+// readToken returns "" when the token file does not exist. The token is
+// optional only without gh: the download is anonymous, but when gh is on
+// PATH it is passed as GH_TOKEN and is the only credential
+// `gh attestation verify` has under the root-run update timer. Without it
+// every update fails closed.
 func readToken(getenv func(string) string, readFile func(string) ([]byte, error)) (string, error) {
-	tokenFile := cmp.Or(getenv("GITHUB_TOKEN_FILE"), "/etc/gitops-agent/github-token")
+	tokenFile := tokenPath(getenv)
 	b, err := readFile(tokenFile)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):

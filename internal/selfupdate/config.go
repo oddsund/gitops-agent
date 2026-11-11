@@ -25,6 +25,9 @@ type Config struct {
 	// Empty defaults to no token. Sent only to the release API request, to
 	// avoid rate limits; never to downloads.
 	Token string
+	// Path the token was read from; used only to name the file in error
+	// hints. Never holds the token itself.
+	TokenFile string
 	// Empty defaults to a client with a five minute timeout.
 	HTTPClient *http.Client
 
@@ -89,3 +92,7 @@ func assetNameFor(override, goarch string) (string, error) {
 	}
 	return "", fmt.Errorf("no release asset published for GOARCH %q (set an explicit asset name)", goarch)
 }
+
+// DefaultTokenFile is where the update subcommand reads the GitHub token
+// unless GITHUB_TOKEN_FILE overrides it.
+const DefaultTokenFile = "/etc/gitops-agent/github-token"
