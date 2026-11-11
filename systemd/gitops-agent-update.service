@@ -9,6 +9,9 @@ Type=oneshot
 # /usr/local/bin and restarts gitops-agent.service, which the unprivileged
 # service user cannot do.
 #
+# gh has no login as root; with gh installed, /etc/gitops-agent/github-token
+# (root, 0600) must exist or verification fails closed.
+#
 # ExecStart runs the same binary gitops-agent.service runs. `gitops-agent
 # install` refuses to proceed unless that binary is owned by root and not
 # group- or world-writable, so the service user can execute it but not

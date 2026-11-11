@@ -197,3 +197,51 @@ func TestAttestation_OldGhHint(t *testing.T) {
 		t.Errorf("calls = %+v, want exactly one (no retry without the flags)", fake.Calls)
 	}
 }
+
+func TestAttestation_UnauthenticatedGhHint(t *testing.T) {
+	cfg, fake, _ := attestationCfg()
+	cfg.TokenFile = "/custom/token"
+	fake.Func = func(cmdrun.Call) ([]byte, error) {
+		return []byte("To get started with GitHub CLI, please run:  gh auth login"), errors.New("exit status 1")
+	}
+	err := verifyAttestation(t.Context(), cfg, "/x/y", "v1.2.3")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	for _, want := range []string{"/custom/token", "GITOPS_AGENT_SKIP_ATTESTATION=1"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err, want)
+		}
+	}
+	if len(fake.Calls) != 1 {
+		t.Errorf("calls = %+v, want exactly one", fake.Calls)
+	}
+}
+
+func TestAttestation_NoHintWhenTokenSet(t *testing.T) {
+	cfg, _, _ := attestationCfg()
+	cfg.Token = "secret-token-value"
+	cfg.TokenFile = "/custom/token"
+	fake := cfg.Runner.(*cmdrun.Fake)
+	fake.Func = func(cmdrun.Call) ([]byte, error) {
+		return []byte("To get started with GitHub CLI, please run:  gh auth login"), errors.New("exit status 1")
+	}
+	err := verifyAttestation(t.Context(), cfg, "/x/y", "v1.2.3")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if strings.Contains(err.Error(), "/custom/token") || strings.Contains(err.Error(), cfg.Token) {
+		t.Errorf("unexpected hint or token in error %q", err)
+	}
+}
+
+func TestAttestation_UnauthenticatedGhHintDefaultPath(t *testing.T) {
+	cfg, fake, _ := attestationCfg()
+	fake.Func = func(cmdrun.Call) ([]byte, error) {
+		return []byte("gh auth login"), errors.New("exit status 1")
+	}
+	err := verifyAttestation(t.Context(), cfg, "/x/y", "v1.2.3")
+	if err == nil || !strings.Contains(err.Error(), DefaultTokenFile) {
+		t.Errorf("error %v missing default token path %q", err, DefaultTokenFile)
+	}
+}

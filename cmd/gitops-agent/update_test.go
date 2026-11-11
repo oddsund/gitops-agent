@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"strings"
 	"testing"
+
+	"github.com/oddsund/gitops-agent/internal/selfupdate"
 )
 
 func envFrom(m map[string]string) func(string) string {
@@ -131,5 +133,14 @@ func TestUpdateHelpPrintsUsage(t *testing.T) {
 func TestRunUpdateHelpIsSuccess(t *testing.T) {
 	if err := runUpdate([]string{"-h"}); err != nil {
 		t.Errorf("runUpdate(-h) = %v, want nil", err)
+	}
+}
+
+func TestTokenPath(t *testing.T) {
+	if got := tokenPath(envFrom(map[string]string{"GITHUB_TOKEN_FILE": "/tmp/tok"})); got != "/tmp/tok" {
+		t.Errorf("override: got %q", got)
+	}
+	if got := tokenPath(envFrom(nil)); got != selfupdate.DefaultTokenFile {
+		t.Errorf("default: got %q", got)
 	}
 }

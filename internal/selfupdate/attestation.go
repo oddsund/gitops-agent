@@ -1,6 +1,7 @@
 package selfupdate
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -72,6 +73,10 @@ func verifyAttestation(ctx context.Context, cfg Config, path, tag string) error 
 	if err != nil {
 		if strings.Contains(string(out), "unknown flag") {
 			return fmt.Errorf("build provenance verification failed for %s: %w: %s (this gh is too old to check the signer workflow; upgrade to gh >= %s or set GITOPS_AGENT_SKIP_ATTESTATION=1)", cfg.Repo, err, truncated(out, 1024), minGHVersion)
+		}
+		if cfg.Token == "" && strings.Contains(string(out), "gh auth login") {
+			tokenFile := cmp.Or(cfg.TokenFile, DefaultTokenFile)
+			return fmt.Errorf("build provenance verification failed for %s: %w: %s (gh has no credentials; put a GitHub token in %s, see docs/install.md, or set GITOPS_AGENT_SKIP_ATTESTATION=1)", cfg.Repo, err, truncated(out, 1024), tokenFile)
 		}
 		return fmt.Errorf("build provenance verification failed for %s: %w: %s", cfg.Repo, err, truncated(out, 1024))
 	}
