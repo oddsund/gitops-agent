@@ -57,9 +57,31 @@ it cannot parse an `env_file`.
   that is less trusted than the host. A secret that reaches compose by
   another route (a literal in `compose.yml`, the host environment) is not
   known to the agent.
-- Decrypt errors (from sops) are shown as they are. They contain no
-  decrypted values. The one exception to consider is the MAC value in an
-  integrity failure, which is derived from the decrypted values.
+- Decrypt errors from sops are treated the same way. The page, `/status.json`,
+  `/healthz` and email show one of three fixed summaries: `sops decrypt
+  failed: integrity check (MAC) failed; see the journal`, `sops decrypt
+  failed: cannot read secrets.enc.env; see the journal`, or `sops decrypt
+  failed; see the journal`. The sops text is never copied into them.
+- The reason: a sops integrity error quotes the stored MAC and the computed
+  MAC. Both are unsalted SHA-512 hashes over the decrypted values, so
+  someone who sees them can test guesses for a weak secret offline. A sops
+  parse error quotes a line of the file, which is plaintext if someone
+  committed an unencrypted file. The journal therefore logs a fixed text for
+  these two cases (`MAC mismatch (values not logged)`, `dotenv parse error
+  (offending line not logged)`). Other sops errors can quote values too (a
+  value that is not in sops format, a value that cannot be converted, a
+  non-string key), and a future sops release may add more, so for them the
+  journal logs only `unclassified sops error` and the Go type of the error.
+  The one exception is the failure to recover the data key (no matching
+  identity, unreadable key file): it is raised before any value is
+  decrypted, so the journal gets its per-key reasons with known secret
+  values replaced by `***`, hex strings of 32 or more characters masked, and
+  a limit of 2 KiB.
+  The journal is readable by root and members of `adm` or `systemd-journal`.
+  If you need the exact sops message, run `sops -d` by hand.
+- Errors from writing or removing the decrypted file (for example
+  `permission denied`) are shown as they are. They hold a path and an OS
+  error text, never file content.
 
 ### Secrets stay in tmpfs
 

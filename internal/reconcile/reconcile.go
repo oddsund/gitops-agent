@@ -358,7 +358,7 @@ func (r *Reconciler) RunOnce(ctx context.Context) (bool, error) {
 		// Only after a successful Down: until then the containers may still
 		// need the env file. A removal failure does not undo the teardown.
 		if err := r.Decrypter.RemoveServiceSecrets(name); err != nil {
-			svcLog.Error("removing decrypted secrets failed", "error", err)
+			svcLog.Error("removing decrypted secrets failed", append([]any{"error", err}, errDetail(err)...)...)
 			errs = append(errs, fmt.Errorf("removing secrets for %s: %w", name, err))
 		}
 		tornDown[name] = true
@@ -377,7 +377,7 @@ func (r *Reconciler) RunOnce(ctx context.Context) (bool, error) {
 			continue
 		}
 		if err := r.Decrypter.RemoveServiceSecrets(svc.Name); err != nil {
-			lg.With("service", svc.Name).Error("removing decrypted secrets failed", "error", err)
+			lg.With("service", svc.Name).Error("removing decrypted secrets failed", append([]any{"error", err}, errDetail(err)...)...)
 			errs = append(errs, fmt.Errorf("removing secrets for %s: %w", svc.Name, err))
 		}
 	}
@@ -425,7 +425,7 @@ func (r *Reconciler) RunOnce(ctx context.Context) (bool, error) {
 		svcLog.Info("decrypting secrets")
 		if err := r.Decrypter.DecryptServiceSecrets(serviceDir, svc.Name); err != nil {
 			failures, delay := r.recordFailure(svc)
-			svcLog.Error("decrypting secrets failed", "error", err, "failures", failures, "retry_in", delay)
+			svcLog.Error("decrypting secrets failed", append([]any{"error", err, "failures", failures, "retry_in", delay}, errDetail(err)...)...)
 			errs = append(errs, fmt.Errorf("decrypting secrets for %s: %w", svc.Name, err))
 			r.Tracker.ServiceResult(svc.Name, err)
 			r.stage[svc.Name] = "decrypt"

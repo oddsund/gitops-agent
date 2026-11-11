@@ -18,6 +18,8 @@ framework.
 A failed deploy or teardown shows the stage, the exit code and "see the
 journal". It never shows the output of `docker compose`, because that output
 can quote a decrypted value. Run `journalctl -u gitops-agent` for the detail.
+A failed sops decrypt works the same way: the page shows a fixed summary such
+as `sops decrypt failed; see the journal`, never the sops error text.
 The same applies to `/healthz`, `/status.json` and the file on disk.
 
 ## Broken services.toml
